@@ -252,3 +252,8 @@ tr.detail:hover { background: var(--panel); }
 .tactions .spacer { flex: 1; }
 
 .foot .trimmed { color: var(--amber-dim); }
+
+.tactions button.apply { border-color: var(--amber); color: var(--amber); }
+.tactions button.apply:hover { background: var(--amber); color: var(--ground); }
+thead th.pick { text-align: center; }
+.foot .note { color: var(--amber-dim); text-transform: none; letter-spacing: 0.04em; }

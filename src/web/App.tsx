@@ -5,6 +5,17 @@ import { bytes, duration } from "./format.ts";
 import { TrackPanel } from "./TrackPanel.tsx";
 import { planFor, estimateBytes, keepEverything, type Selection } from "../shared/estimate.ts";
 
+/**
+ * Do two files carry the same track layout? Compared by ordered codec,
+ * channel count and language, so episodes from one release match while a
+ * differently-muxed extra does not.
+ */
+function sameLayout(a: NonNullable<DirEntry["probe"]>, b: NonNullable<DirEntry["probe"]>): boolean {
+  const audio = (p: typeof a) => p.audio.map((t) => `${t.codec}:${t.channels}:${t.language ?? "und"}`).join("|");
+  const subs = (p: typeof a) => p.subtitles.map((t) => `${t.codec}:${t.language ?? "und"}`).join("|");
+  return audio(a) === audio(b) && subs(a) === subs(b);
+}
+
 /** Projection for one file under the track choices currently in force. */
 function project(entry: DirEntry, selection: Selection | undefined): { after: number | null; saving: number | null } {
   if (!entry.probe) return { after: null, saving: null };
@@ -23,6 +34,8 @@ export function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [selections, setSelections] = useState<Map<string, Selection>>(new Map());
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const go = useCallback(async (path?: string) => {
     setLoading(true);
@@ -32,6 +45,8 @@ export function App() {
       setSelected(new Set());
       setExpanded(null);
       setSelections(new Map());
+      setAnchor(null);
+      setNote(null);
     } catch (err) {
       setError((err as Error).message);
       setListing(null);
@@ -61,14 +76,75 @@ export function App() {
   );
   const trimmed = useMemo(() => selections.size, [selections]);
 
-  const toggle = (path: string) =>
+  /**
+   * Toggle one row, or with shift held, every selectable row between the last
+   * one clicked and this one — the behaviour a 24-episode season needs.
+   */
+  const toggle = (path: string, range = false) => {
+    if (range && anchor) {
+      const order = actionable.map((e) => e.path);
+      const from = order.indexOf(anchor);
+      const to = order.indexOf(path);
+      if (from !== -1 && to !== -1) {
+        const span = order.slice(Math.min(from, to), Math.max(from, to) + 1);
+        setSelected((prev) => new Set([...prev, ...span]));
+        setAnchor(path);
+        return;
+      }
+    }
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(path) ? next.delete(path) : next.add(path);
       return next;
     });
+    setAnchor(path);
+  };
 
-  const selectAllActionable = () => setSelected(new Set(actionable.map((e) => e.path)));
+  const allSelected = actionable.length > 0 && actionable.every((e) => selected.has(e.path));
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(actionable.map((e) => e.path)));
+    setAnchor(null);
+  };
+
+  /**
+   * Copy one file's track choices onto every other selected file with the
+   * same track layout. Episodes from one release share a layout, so this is
+   * the difference between choosing once and choosing 24 times. Files that
+   * differ are left alone and reported rather than guessed at.
+   */
+  const applyTracksToSelection = (sourcePath: string, selection: Selection) => {
+    const source = videos.find((e) => e.path === sourcePath);
+    if (!source?.probe) return;
+    const keptAudioPositions = source.probe.audio
+      .map((t, i) => (selection.audio.includes(t.index) ? i : -1))
+      .filter((i) => i >= 0);
+    const keptSubPositions = source.probe.subtitles
+      .map((t, i) => (selection.subtitles.includes(t.index) ? i : -1))
+      .filter((i) => i >= 0);
+
+    let applied = 0;
+    let skipped = 0;
+    const next = new Map(selections);
+    for (const entry of videos) {
+      if (entry.path === sourcePath || !selected.has(entry.path) || !entry.probe) continue;
+      if (!sameLayout(source.probe, entry.probe)) {
+        skipped++;
+        continue;
+      }
+      next.set(entry.path, {
+        audio: keptAudioPositions.map((i) => entry.probe!.audio[i]!.index),
+        subtitles: keptSubPositions.map((i) => entry.probe!.subtitles[i]!.index),
+      });
+      applied++;
+    }
+    setSelections(next);
+    setNote(
+      applied === 0 && skipped === 0
+        ? "Select other episodes first, then apply."
+        : `Applied to ${applied} file${applied === 1 ? "" : "s"}` +
+            (skipped > 0 ? ` · ${skipped} skipped, different track layout` : ""),
+    );
+  };
 
   const pin = async () => {
     if (!listing) return;
@@ -165,6 +241,11 @@ export function App() {
                 selected={selected}
                 onToggle={toggle}
                 onOpen={go}
+                allSelected={allSelected}
+                onToggleAll={toggleAll}
+                anySelected={selected.size > 0}
+                selectedCount={selected.size}
+                onApplyTracks={applyTracksToSelection}
                 expanded={expanded}
                 onExpand={(path) => setExpanded((prev) => (prev === path ? null : path))}
                 selections={selections}
@@ -181,11 +262,7 @@ export function App() {
         <span>
           {videos.length} file{videos.length === 1 ? "" : "s"} · {actionable.length} worth converting
         </span>
-        {actionable.length > 0 && (
-          <button className="link" style={{ color: "var(--amber-dim)" }} onClick={selectAllActionable}>
-            select all
-          </button>
-        )}
+        {note && <span className="note">{note}</span>}
         <span className="spacer" />
         <span>
           {trimmed > 0 && <span className="trimmed">{trimmed} retrimmed · </span>}
@@ -218,12 +295,18 @@ function Hud({ health }: { health: HealthReport | null }) {
 }
 
 function Listing({
-  listing, selected, onToggle, onOpen, expanded, onExpand, selections, onSelectionChange,
+  listing, selected, onToggle, onOpen, allSelected, onToggleAll, anySelected, selectedCount,
+  onApplyTracks, expanded, onExpand, selections, onSelectionChange,
 }: {
   listing: BrowseResponse;
   selected: Set<string>;
-  onToggle: (path: string) => void;
+  onToggle: (path: string, range?: boolean) => void;
   onOpen: (path: string) => void;
+  allSelected: boolean;
+  onToggleAll: () => void;
+  anySelected: boolean;
+  selectedCount: number;
+  onApplyTracks: (path: string, selection: Selection) => void;
   expanded: string | null;
   onExpand: (path: string) => void;
   selections: Map<string, Selection>;
@@ -244,7 +327,17 @@ function Listing({
       </colgroup>
       <thead>
         <tr>
-          <th aria-label="Selected" />
+          <th className="pick">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              ref={(el) => { if (el) el.indeterminate = anySelected && !allSelected; }}
+              onChange={onToggleAll}
+              aria-label={allSelected ? "Deselect all" : "Select everything worth converting"}
+              title={allSelected ? "Deselect all" : "Select everything worth converting in this folder"}
+              style={{ accentColor: "var(--amber)" }}
+            />
+          </th>
           <th>Name</th>
           <th>Assessment</th>
           <th className="num">Length</th>
@@ -259,8 +352,10 @@ function Listing({
             key={entry.path}
             entry={entry}
             checked={selected.has(entry.path)}
-            onToggle={() => onToggle(entry.path)}
+            onToggle={(range) => onToggle(entry.path, range)}
             onOpen={() => onOpen(entry.path)}
+            selectedCount={selectedCount}
+            onApplyTracks={(sel) => onApplyTracks(entry.path, sel)}
             expanded={expanded === entry.path}
             onExpand={() => onExpand(entry.path)}
             selection={selections.get(entry.path)}
@@ -273,12 +368,15 @@ function Listing({
 }
 
 function Row({
-  entry, checked, onToggle, onOpen, expanded, onExpand, selection, onSelectionChange,
+  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks,
+  expanded, onExpand, selection, onSelectionChange,
 }: {
   entry: DirEntry;
   checked: boolean;
-  onToggle: () => void;
+  onToggle: (range: boolean) => void;
   onOpen: () => void;
+  selectedCount: number;
+  onApplyTracks: (selection: Selection) => void;
   expanded: boolean;
   onExpand: () => void;
   selection: Selection | undefined;
@@ -319,8 +417,10 @@ function Row({
             <input
               type="checkbox"
               checked={checked}
-              onChange={onToggle}
+              onChange={() => {}}
+              onClick={(event) => onToggle(event.shiftKey)}
               aria-label={`Select ${entry.name}`}
+              title="Shift-click to select a range"
               style={{ accentColor: "var(--amber)" }}
             />
           )}
@@ -359,6 +459,9 @@ function Row({
               entry={entry}
               selection={selection ?? keepEverything(entry.probe)}
               onChange={onSelectionChange}
+              selectedCount={selectedCount}
+              isSelected={checked}
+              onApplyToSelection={onApplyTracks}
             />
           </td>
         </tr>

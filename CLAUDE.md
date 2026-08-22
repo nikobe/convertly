@@ -133,6 +133,14 @@ per file. The heuristic is a good default, not a certainty.
 `estimate.ts` is shared by server and client precisely so the row total and
 the panel can never disagree.
 
+A season is the working unit, not a file: the header checkbox takes the whole
+folder, shift-click takes a range, and "apply to selected" copies one file's
+track choices onto every other selected file **with a matching track layout**.
+Layout is compared by ordered codec, channel count and language. Files that
+differ are skipped and counted in the status line rather than guessed at — an
+extended cut with a different mux must not silently inherit choices made for
+a standard episode.
+
 ## Design
 
 Single committed dark theme — an amber phosphor terminal, Sample Feature-adjacent, no

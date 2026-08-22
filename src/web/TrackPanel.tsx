@@ -6,13 +6,16 @@ interface Props {
   entry: DirEntry;
   selection: Selection;
   onChange: (next: Selection) => void;
+  selectedCount: number;
+  isSelected: boolean;
+  onApplyToSelection: (selection: Selection) => void;
 }
 
 /**
  * Per-file track chooser. Read-only in phase 01 — it changes the projection,
  * not the file — but the choice it records is what phase 02 will act on.
  */
-export function TrackPanel({ entry, selection, onChange }: Props) {
+export function TrackPanel({ entry, selection, onChange, selectedCount, isSelected, onApplyToSelection }: Props) {
   const probe = entry.probe;
   if (!probe) return null;
 
@@ -118,6 +121,11 @@ export function TrackPanel({ entry, selection, onChange }: Props) {
         <button onClick={keepAll}>Keep everything</button>
         {hasForeign && <button onClick={keepPreferred}>Keep English only</button>}
         <button onClick={keepPrimaryOnly}>Keep one audio track</button>
+        {isSelected && selectedCount > 1 && (
+          <button className="apply" onClick={() => onApplyToSelection(selection)}>
+            Apply to {selectedCount - 1} other selected
+          </button>
+        )}
         <span className="spacer" />
         <span className="tnote">
           Phase 01 only projects this. Nothing is written until phase 02.
