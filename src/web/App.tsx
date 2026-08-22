@@ -2,6 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BrowseResponse, Bookmark, HealthReport, Root, DirEntry } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { bytes, duration } from "./format.ts";
+import { TrackPanel } from "./TrackPanel.tsx";
+import { planFor, estimateBytes, keepEverything, type Selection } from "../shared/estimate.ts";
+
+/** Projection for one file under the track choices currently in force. */
+function project(entry: DirEntry, selection: Selection | undefined): { after: number | null; saving: number | null } {
+  if (!entry.probe) return { after: null, saving: null };
+  const chosen = selection ?? keepEverything(entry.probe);
+  const after = estimateBytes(entry.probe, planFor(entry.probe), chosen);
+  return { after, saving: after === null ? null : Math.max(0, entry.size! - after) };
+}
 
 export function App() {
   const [health, setHealth] = useState<HealthReport | null>(null);
@@ -11,6 +21,8 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selections, setSelections] = useState<Map<string, Selection>>(new Map());
 
   const go = useCallback(async (path?: string) => {
     setLoading(true);
@@ -18,6 +30,8 @@ export function App() {
     try {
       setListing(await api.browse(path));
       setSelected(new Set());
+      setExpanded(null);
+      setSelections(new Map());
     } catch (err) {
       setError((err as Error).message);
       setListing(null);
@@ -39,9 +53,13 @@ export function App() {
     [videos],
   );
   const recoverable = useMemo(
-    () => videos.filter((e) => selected.has(e.path)).reduce((sum, e) => sum + (e.assessment?.savingBytes ?? 0), 0),
-    [videos, selected],
+    () =>
+      videos
+        .filter((e) => selected.has(e.path))
+        .reduce((sum, e) => sum + (project(e, selections.get(e.path)).saving ?? 0), 0),
+    [videos, selected, selections],
   );
+  const trimmed = useMemo(() => selections.size, [selections]);
 
   const toggle = (path: string) =>
     setSelected((prev) => {
@@ -141,7 +159,20 @@ export function App() {
           <div className="listing">
             {loading && <p className="msg">Scanning<span className="scanning" /></p>}
             {error && <p className="msg error">{error}</p>}
-            {!loading && !error && listing && <Listing listing={listing} selected={selected} onToggle={toggle} onOpen={go} />}
+            {!loading && !error && listing && (
+              <Listing
+                listing={listing}
+                selected={selected}
+                onToggle={toggle}
+                onOpen={go}
+                expanded={expanded}
+                onExpand={(path) => setExpanded((prev) => (prev === path ? null : path))}
+                selections={selections}
+                onSelectionChange={(path, next) =>
+                  setSelections((prev) => new Map(prev).set(path, next))
+                }
+              />
+            )}
           </div>
         </main>
       </div>
@@ -157,6 +188,7 @@ export function App() {
         )}
         <span className="spacer" />
         <span>
+          {trimmed > 0 && <span className="trimmed">{trimmed} retrimmed · </span>}
           {selected.size} selected · <span className="total">{bytes(recoverable)} recoverable</span>
         </span>
         <button className="cta" disabled title="Queueing arrives in phase 02. Phase 01 cannot modify any file.">
@@ -186,12 +218,16 @@ function Hud({ health }: { health: HealthReport | null }) {
 }
 
 function Listing({
-  listing, selected, onToggle, onOpen,
+  listing, selected, onToggle, onOpen, expanded, onExpand, selections, onSelectionChange,
 }: {
   listing: BrowseResponse;
   selected: Set<string>;
   onToggle: (path: string) => void;
   onOpen: (path: string) => void;
+  expanded: string | null;
+  onExpand: (path: string) => void;
+  selections: Map<string, Selection>;
+  onSelectionChange: (path: string, next: Selection) => void;
 }) {
   if (listing.entries.length === 0) return <p className="msg">This folder is empty.</p>;
 
@@ -225,6 +261,10 @@ function Listing({
             checked={selected.has(entry.path)}
             onToggle={() => onToggle(entry.path)}
             onOpen={() => onOpen(entry.path)}
+            expanded={expanded === entry.path}
+            onExpand={() => onExpand(entry.path)}
+            selection={selections.get(entry.path)}
+            onSelectionChange={(next) => onSelectionChange(entry.path, next)}
           />
         ))}
       </tbody>
@@ -233,12 +273,16 @@ function Listing({
 }
 
 function Row({
-  entry, checked, onToggle, onOpen,
+  entry, checked, onToggle, onOpen, expanded, onExpand, selection, onSelectionChange,
 }: {
   entry: DirEntry;
   checked: boolean;
   onToggle: () => void;
   onOpen: () => void;
+  expanded: boolean;
+  onExpand: () => void;
+  selection: Selection | undefined;
+  onSelectionChange: (next: Selection) => void;
 }) {
   if (entry.kind === "dir") {
     return (
@@ -262,32 +306,63 @@ function Row({
   }
 
   const a = entry.assessment;
-  const work = Boolean(a && (a.videoWork || a.audioWork) && !a.blockedReason);
+  const trimmable = Boolean(entry.probe && entry.probe.audio.length + entry.probe.subtitles.length > 1);
+  const { after, saving } = project(entry, selection);
+  // A file needing no re-encode is still worth queueing once tracks are cut.
+  const work = Boolean(a && (a.videoWork || a.audioWork || (selection && saving)) && !a.blockedReason);
 
   return (
-    <tr className={`${work ? "clickable" : "idle"}${checked ? " sel" : ""}`}>
-      <td className="pick">
-        {work && (
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={onToggle}
-            aria-label={`Select ${entry.name}`}
-            style={{ accentColor: "var(--amber)" }}
-          />
-        )}
-      </td>
-      <td className="name" title={entry.name}>{entry.name}</td>
-      <td className="chips">
-        {a?.chips.map((chip) => (
-          <span className={`chip ${chip.tone}`} key={chip.label} title={chip.title}>{chip.label}</span>
-        ))}
-        {a?.blockedReason && <span className="blocked" title={a.blockedReason}>· held</span>}
-      </td>
-      <td className="num">{duration(entry.probe?.durationSec ?? null)}</td>
-      <td className="num">{bytes(entry.size)}</td>
-      <td className="num">{work ? bytes(a?.estimatedBytes ?? null) : "—"}</td>
-      <td className="num save">{work && a?.savingBytes ? bytes(a.savingBytes) : "—"}</td>
-    </tr>
+    <>
+      <tr className={`${work ? "clickable" : "idle"}${checked ? " sel" : ""}${expanded ? " open" : ""}`}>
+        <td className="pick">
+          {work && (
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={onToggle}
+              aria-label={`Select ${entry.name}`}
+              style={{ accentColor: "var(--amber)" }}
+            />
+          )}
+        </td>
+        <td className="name" title={entry.name}>
+          {entry.probe ? (
+            <button
+              className="expander"
+              onClick={onExpand}
+              aria-expanded={expanded}
+              title={trimmable ? "Show tracks" : "Show details"}
+            >
+              <span className="caret">{expanded ? "▾" : "▸"}</span>
+              {entry.name}
+            </button>
+          ) : (
+            entry.name
+          )}
+        </td>
+        <td className="chips">
+          {a?.chips.map((chip) => (
+            <span className={`chip ${chip.tone}`} key={chip.label} title={chip.title}>{chip.label}</span>
+          ))}
+          {a?.blockedReason && <span className="blocked" title={a.blockedReason}>· held</span>}
+        </td>
+        <td className="num">{duration(entry.probe?.durationSec ?? null)}</td>
+        <td className="num">{bytes(entry.size)}</td>
+        <td className="num">{work ? bytes(after) : "—"}</td>
+        <td className="num save">{work && saving ? bytes(saving) : "—"}</td>
+      </tr>
+      {expanded && entry.probe && (
+        <tr className="detail">
+          <td />
+          <td colSpan={6}>
+            <TrackPanel
+              entry={entry}
+              selection={selection ?? keepEverything(entry.probe)}
+              onChange={onSelectionChange}
+            />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

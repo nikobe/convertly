@@ -106,11 +106,32 @@ filesystem without going through it.
 
 1. **Probe and browse** — read-only. *(current)*
 2. One file end to end: presets, encode, verify, quarantine, atomic replace,
-   arr rescan, Plex refresh.
+   arr rescan, Plex refresh. **Includes acting on track selections** — see
+   below.
 3. The queue: persistent, SSE progress, pause/resume/cancel, add-while-running.
 4. Governors: time window, batch rhythm, thermal ceiling, playback-aware
    pause, disk guard.
 5. Polish: smart lists, savings ledger, sample estimator, review tray.
+
+## Audio and subtitle track selection
+
+Real releases carry a pile of foreign dubs: one test file had eight foreign-language
+5.1 tracks plus an English stereo "Original Mono Mix", where the dubs alone
+were 1.8 GB of a 5.3 GB file — more than the video re-encode saves. Dropping
+them takes that file from 5.3 GB to 1.9 GB.
+
+So `primaryAudio` in `src/shared/estimate.ts` does not pick on channel count.
+Precedence is explicit preferred language, then untagged, then channels, then
+the default flag — on a foreign release the untagged 5.1 is usually itself a
+dub, so an explicit `eng` tag has to beat a wider untagged track.
+
+The browse screen expands each file into a track chooser. It is projection
+only in phase 01; phase 02 must honour the recorded selection when building
+the ffmpeg command, and must show the chosen primary so it can be overridden
+per file. The heuristic is a good default, not a certainty.
+
+`estimate.ts` is shared by server and client precisely so the row total and
+the panel can never disagree.
 
 ## Design
 

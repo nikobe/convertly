@@ -196,3 +196,59 @@ td.save { color: var(--amber); }
 }
 @keyframes blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .scanning { animation: none; } }
+
+/* ── expandable track panel ────────────────────────────── */
+
+td.name button.expander { display: flex; gap: 0.45rem; align-items: baseline; }
+td.name button.expander:hover { color: var(--amber-hi); }
+td.name .caret { color: var(--amber-dim); width: 0.8em; flex: none; }
+tbody tr.open { background: var(--panel-2); }
+tbody tr.open td.name button.expander { color: var(--amber); }
+
+tr.detail > td { background: var(--panel); border-bottom: 1px solid var(--rule-hi); padding: 0; }
+tr.detail:hover { background: var(--panel); }
+
+.tracks { display: flex; flex-direction: column; gap: 0.85rem; padding: 0.85rem 0.6rem 0.75rem; }
+.tgroup { display: flex; flex-direction: column; gap: 1px; }
+.tgroup h3 {
+  font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--text-faint); margin: 0 0 0.3rem; font-weight: 400;
+}
+.tgroup h3 .tcount { color: var(--amber-dim); letter-spacing: 0.1em; margin-left: 0.5rem; }
+.tempty { margin: 0; color: var(--text-faint); font-size: 11px; }
+
+.track {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  padding: 0.15rem 0.4rem; font-size: 12px; cursor: pointer;
+}
+.track:hover { background: var(--panel-2); }
+.track.fixed { cursor: default; padding-left: 1.55rem; }
+.track.off { color: var(--text-faint); }
+.track.off .tcodec, .track.off .tlang { color: var(--text-faint); }
+.track input { margin: 0; flex: none; }
+
+.tno { color: var(--text-faint); width: 2.2rem; flex: none; }
+.tcodec { color: var(--amber-hi); width: 6rem; flex: none; }
+.tlang { color: var(--text); width: 4.5rem; flex: none; text-transform: uppercase; letter-spacing: 0.06em; }
+.tmeta { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tnote { color: var(--text-faint); font-size: 11px; }
+.tflag {
+  flex: none; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--rule-hi); color: var(--text-dim); padding: 0 0.3rem;
+}
+.tflag.primary { border-color: var(--amber); color: var(--amber); }
+.tflag.atmos { border-color: var(--warn); color: var(--warn); }
+
+.tactions {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding-top: 0.6rem; border-top: 1px solid var(--rule);
+}
+.tactions button {
+  border: 1px solid var(--rule-hi); color: var(--text-dim);
+  padding: 0.15rem 0.6rem; font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+.tactions button:hover { border-color: var(--amber); color: var(--amber); }
+.tactions .spacer { flex: 1; }
+
+.foot .trimmed { color: var(--amber-dim); }

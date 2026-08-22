@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assess, bitsPerPixel, primaryAudio, AC3_BITRATE, HARDWARE_MIN_HEIGHT } from "./classify.ts";
+import { planFor, estimateBytes, keepEverything } from "../shared/estimate.ts";
 import type { Probe, AudioTrack } from "../shared/types.ts";
 
 function probe(over: Partial<Probe> = {}): Probe {
@@ -84,8 +85,9 @@ test("Dolby Vision is held back", () => {
 test("estimate replaces the primary track at the AC3 ceiling and keeps the rest", () => {
   const commentary = audio({ index: 2, codec: "ac3", channels: 2, bitrate: 192_000 });
   const a = assess(probe({ audio: [audio({}), commentary] }));
-  // video 25 Mbps * 0.5 (h264->hevc) + 640k primary + 192k commentary, over 7200s
-  const expected = Math.round(((12_500_000 + AC3_BITRATE + 192_000) * 7200 / 8) * 1.01);
+  // video 25 Mbps * 0.5 (h264->hevc) + 640k primary + 192k commentary, over
+  // 7200s, plus 0.5% container overhead. No subtitles on this fixture.
+  const expected = Math.round(((12_500_000 + AC3_BITRATE + 192_000) * 7200 / 8) * 1.005);
   assert.equal(a.estimatedBytes, expected);
 });
 
@@ -150,4 +152,40 @@ test("bitsPerPixel returns null when any input is missing", () => {
   assert.equal(bitsPerPixel(null, 1920, 1080, 24), null);
   assert.equal(bitsPerPixel(25_000_000, 1920, 1080, null), null);
   assert.ok((bitsPerPixel(25_000_000, 1920, 1080, 24) ?? 0) > 0.4);
+});
+
+test("dropping dub tracks shrinks the estimate", () => {
+  const tracks = [1, 2, 3, 4].map((i) =>
+    audio({ index: i, codec: "ac3", channels: 6, language: i === 1 ? "eng" : "rus", bitrate: 448_000 }),
+  );
+  const p = probe({ audio: tracks });
+  const plan = planFor(p);
+
+  const all = estimateBytes(p, plan, keepEverything(p))!;
+  const englishOnly = estimateBytes(p, plan, { audio: [1], subtitles: [] })!;
+
+  assert.ok(englishOnly < all, "keeping one track must estimate smaller than keeping four");
+  // Three dropped tracks at 448 kbps over 7200s, give or take the overhead.
+  const saved = all - englishOnly;
+  assert.ok(Math.abs(saved - (3 * 448_000 * 7200) / 8) / saved < 0.02);
+});
+
+test("dropping image subtitles is worth more than dropping text ones", () => {
+  const subs = [
+    { index: 10, codec: "hdmv_pgs_subtitle", language: "eng", title: null, forced: false },
+    { index: 11, codec: "subrip", language: "eng", title: null, forced: false },
+  ];
+  const p = probe({ subtitles: subs });
+  const plan = planFor(p);
+  const noPgs = estimateBytes(p, plan, { audio: [1], subtitles: [11] })!;
+  const noSrt = estimateBytes(p, plan, { audio: [1], subtitles: [10] })!;
+  assert.ok(noPgs < noSrt, "dropping the PGS track should save more than dropping the SRT");
+});
+
+test("keeping everything on a file needing no work returns the original size", () => {
+  const p = probe({
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4_000_000, hdr: null },
+    audio: [audio({ codec: "eac3", bitrate: 768_000 })],
+  });
+  assert.equal(estimateBytes(p, planFor(p), keepEverything(p)), p.size);
 });
