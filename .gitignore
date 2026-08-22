@@ -41,3 +41,5 @@ quarantine/
 .env.*
 !.env.example
 config.local.*
+fixtures/
+config/convertly.json
