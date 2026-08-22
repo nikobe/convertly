@@ -105,9 +105,9 @@ filesystem without going through it.
 ## Build phases
 
 1. **Probe and browse** — read-only. *(current)*
-2. One file end to end: presets, encode, verify, quarantine, atomic replace,
-   arr rescan, Plex refresh. **Includes acting on track selections** — see
-   below.
+2. One file end to end. *(steps 1–4 built: command builder, encode runner,
+   verification gate, quarantine + atomic replace. Arr rescan and Plex refresh
+   still to do, and there is no UI trigger yet — jobs run via `runJob`.)*
 3. The queue: persistent, SSE progress, pause/resume/cancel, add-while-running.
 4. Governors: time window, batch rhythm, thermal ceiling, playback-aware
    pause, disk guard.
@@ -140,6 +140,31 @@ Layout is compared by ordered codec, channel count and language. Files that
 differ are skipped and counted in the status line rather than guessed at — an
 extended cut with a different mux must not silently inherit choices made for
 a standard episode.
+
+## The encode pipeline
+
+`runJob` in `pipeline.ts` is the whole of it: build, encode, verify, swap, in
+that order and never out of it. Nothing touches the original until every check
+has passed. A failure leaves the library byte-for-byte as it was; a `review`
+outcome keeps the encode so accepting it later costs no re-encode.
+
+- `ffmpeg-args.ts` is pure — the entire policy is testable without encoding a
+  frame. It is also where the integer-bitrate rule lives, with a test that
+  fails if any SI-suffixed number could ever reach ffmpeg.
+- `encoder.ts` parses `-progress pipe:1`. **ETA comes from throughput measured
+  over a trailing 60-second window**, never a static figure — the target host
+  throttles, so a rate sampled in the first minute is a lie by hour three.
+  `pause()`/`resume()` are SIGSTOP/SIGCONT, so governors are cheap.
+- `verify.ts` gates on readability, duration drift, track census, chapters, a
+  full decode sweep, size delta and mean VMAF over three sampled windows.
+  `fail` aborts; `review` holds for a human.
+- `replace.ts` is the arr-safety boundary. Same-volume rename only — a
+  cross-volume swap is refused rather than silently becoming a copy — then
+  mtime and mode are restored. `sweepQuarantine` only ever looks inside a
+  directory literally named `.convertly-quarantine`, and there is a test
+  asserting a bystander file is never swept.
+
+Quarantine retention is 14 days.
 
 ## Design
 

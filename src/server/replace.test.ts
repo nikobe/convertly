@@ -1,0 +1,137 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync,
+  existsSync, utimesSync, chmodSync, readdirSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import {
+  replaceInPlace, restore, sweepQuarantine, ReplaceError, QUARANTINE_DIRNAME,
+} from "./replace.ts";
+import { PathNotAllowedError } from "./paths.ts";
+import type { Root } from "../shared/types.ts";
+
+const NAME = "Sample Feature (1999) Bluray-1080p x264 DTS-HD MA 5.1.mkv";
+const OLD_MTIME = new Date("2019-03-04T10:11:12Z");
+
+function fixture() {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "convertly-replace-")));
+  const movies = join(base, "Movies");
+  const tmp = join(movies, ".convertly-tmp");
+  mkdirSync(tmp, { recursive: true });
+
+  const original = join(movies, NAME);
+  writeFileSync(original, "ORIGINAL-CONTENT-that-is-larger");
+  utimesSync(original, OLD_MTIME, OLD_MTIME);
+  chmodSync(original, 0o644);
+
+  const encoded = join(tmp, "out.mkv");
+  writeFileSync(encoded, "NEW");
+
+  const roots: Root[] = [{ id: "m", label: "Movies", path: movies }];
+  return { base, movies, tmp, original, encoded, roots };
+}
+
+test("the live filename is byte-identical after the swap", () => {
+  const { movies, original, encoded, roots } = fixture();
+  const record = replaceInPlace(original, encoded, roots);
+
+  assert.equal(record.livePath, original);
+  assert.equal(readFileSync(original, "utf8"), "NEW", "the new file must be at the original path");
+  const names = readdirSync(movies).filter((n) => n !== QUARANTINE_DIRNAME && n !== ".convertly-tmp");
+  assert.deepEqual(names, [NAME], "no renamed leftovers beside it");
+});
+
+test("the original mtime is restored, so nothing downstream sees a new file", () => {
+  const { original, encoded, roots } = fixture();
+  replaceInPlace(original, encoded, roots);
+  assert.equal(
+    Math.round(statSync(original).mtimeMs),
+    Math.round(OLD_MTIME.getTime()),
+    "a changed mtime is what makes a scanner re-read the file",
+  );
+});
+
+test("permissions carry over", () => {
+  const { original, encoded, roots } = fixture();
+  chmodSync(original, 0o640);
+  replaceInPlace(original, encoded, roots);
+  assert.equal(statSync(original).mode & 0o777, 0o640);
+});
+
+test("the original is kept in quarantine, not deleted", () => {
+  const { original, encoded, roots } = fixture();
+  const record = replaceInPlace(original, encoded, roots);
+  assert.ok(existsSync(record.quarantinePath));
+  assert.equal(readFileSync(record.quarantinePath, "utf8"), "ORIGINAL-CONTENT-that-is-larger");
+  assert.match(record.quarantinePath, new RegExp(`${QUARANTINE_DIRNAME}/.*__${NAME.replace(/[()]/g, "\\$&")}$`));
+});
+
+test("restore puts the original back and parks the encode", () => {
+  const { original, encoded, roots } = fixture();
+  const record = replaceInPlace(original, encoded, roots);
+  restore(record, roots);
+
+  assert.equal(readFileSync(original, "utf8"), "ORIGINAL-CONTENT-that-is-larger");
+  assert.equal(Math.round(statSync(original).mtimeMs), Math.round(OLD_MTIME.getTime()));
+  assert.ok(existsSync(`${record.quarantinePath}.replaced`), "the encode is kept, so undo is itself undoable");
+});
+
+test("refuses a cross-volume swap rather than silently copying", () => {
+  const { original, roots } = fixture();
+  // A temp file on a different filesystem, faked by pointing outside the root.
+  const elsewhere = join(realpathSync(mkdtempSync(join(tmpdir(), "convertly-other-"))), "out.mkv");
+  writeFileSync(elsewhere, "NEW");
+  assert.throws(() => replaceInPlace(original, elsewhere, roots), PathNotAllowedError);
+});
+
+test("refuses to swap in an empty file", () => {
+  const { original, tmp, roots } = fixture();
+  const empty = join(tmp, "empty.mkv");
+  writeFileSync(empty, "");
+  assert.throws(() => replaceInPlace(original, empty, roots), ReplaceError);
+});
+
+test("refuses when the original has vanished", () => {
+  const { movies, encoded, roots } = fixture();
+  assert.throws(() => replaceInPlace(join(movies, "gone.mkv"), encoded, roots), ReplaceError);
+});
+
+test("refuses paths outside the configured roots", () => {
+  const { encoded, roots } = fixture();
+  assert.throws(() => replaceInPlace("/etc/hosts", encoded, roots), PathNotAllowedError);
+});
+
+test("sweep keeps everything inside the retention window", () => {
+  const { original, encoded, roots } = fixture();
+  replaceInPlace(original, encoded, roots);
+  const result = sweepQuarantine(roots, 14);
+  assert.deepEqual(result.removed, []);
+  assert.equal(result.kept, 1);
+});
+
+test("sweep removes originals past the window and reports what it freed", () => {
+  const { original, encoded, roots } = fixture();
+  const record = replaceInPlace(original, encoded, roots);
+  const size = statSync(record.quarantinePath).size;
+
+  const fifteenDaysOn = Date.now() + 15 * 24 * 60 * 60 * 1000;
+  const result = sweepQuarantine(roots, 14, fifteenDaysOn);
+
+  assert.deepEqual(result.removed, [record.quarantinePath]);
+  assert.equal(result.freedBytes, size);
+  assert.equal(existsSync(record.quarantinePath), false);
+});
+
+test("sweep never looks outside a quarantine directory", () => {
+  const { movies, original, encoded, roots } = fixture();
+  const bystander = join(movies, "Some Other Film.mkv");
+  writeFileSync(bystander, "DO NOT TOUCH");
+  replaceInPlace(original, encoded, roots);
+
+  sweepQuarantine(roots, 0, Date.now() + 1e9);
+  assert.ok(existsSync(bystander), "a file outside quarantine must never be swept");
+  assert.equal(readFileSync(bystander, "utf8"), "DO NOT TOUCH");
+});
