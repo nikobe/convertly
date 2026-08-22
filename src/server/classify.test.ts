@@ -8,7 +8,7 @@ function probe(over: Partial<Probe> = {}): Probe {
   return {
     path: "/m/film.mkv", size: 24_000_000_000, mtimeMs: 1, durationSec: 7200,
     container: "matroska", chapters: 12, probedAt: 0, error: null, subtitles: [],
-    video: { index: 0, codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 25_000_000, hdr: null },
+    video: { index: 0, codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 25_000_000, hdr: null, colorTransfer: null },
     audio: [audio({})],
     ...over,
   };
@@ -28,7 +28,7 @@ test("h264 + DTS needs both video and audio work", () => {
 
 test("hevc + eac3 needs nothing and is marked OK", () => {
   const p = probe({
-    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4_000_000, hdr: null },
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4_000_000, hdr: null, colorTransfer: null },
     audio: [audio({ codec: "eac3", bitrate: 768_000 })],
   });
   const a = assess(p);
@@ -43,14 +43,14 @@ test("encoder splits on resolution at the 4K boundary", () => {
   assert.equal(hd.encoder, "libx265");
 
   const uhd = assess(probe({
-    video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60_000_000, hdr: null },
+    video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60_000_000, hdr: null, colorTransfer: null },
   }));
   assert.equal(uhd.encoder, "hevc_videotoolbox");
   assert.ok(2160 >= HARDWARE_MIN_HEIGHT);
 });
 
 test("hardware encodes are estimated larger than software for the same ratio", () => {
-  const base = { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 40_000_000, hdr: null } as const;
+  const base = { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 40_000_000, hdr: null, colorTransfer: null } as const;
   const uhd = assess(probe({ video: { ...base } }));
   const hd = assess(probe({ video: { ...base, width: 1920, height: 1080 } }));
   // Same source bitrate and ratio; only the 1.3x hardware penalty differs.
@@ -59,7 +59,7 @@ test("hardware encodes are estimated larger than software for the same ratio", (
 
 test("an already-efficient but bloated HEVC file is flagged", () => {
   const p = probe({
-    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 40_000_000, hdr: null },
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 40_000_000, hdr: null, colorTransfer: null },
     audio: [audio({ codec: "eac3", bitrate: 768_000 })],
   });
   const a = assess(p);
@@ -76,7 +76,7 @@ test("Atmos blocks conversion rather than silently discarding objects", () => {
 
 test("Dolby Vision is held back", () => {
   const p = probe({
-    video: { index: 0, codec: "hevc", width: 3840, height: 2160, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 60_000_000, hdr: "Dolby Vision" },
+    video: { index: 0, codec: "hevc", width: 3840, height: 2160, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 60_000_000, hdr: "Dolby Vision", colorTransfer: null },
     audio: [audio({ codec: "eac3", bitrate: 768_000 })],
   });
   assert.match(assess(p).blockedReason ?? "", /Dolby Vision/);
@@ -184,8 +184,35 @@ test("dropping image subtitles is worth more than dropping text ones", () => {
 
 test("keeping everything on a file needing no work returns the original size", () => {
   const p = probe({
-    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4_000_000, hdr: null },
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4_000_000, hdr: null, colorTransfer: null },
     audio: [audio({ codec: "eac3", bitrate: 768_000 })],
   });
   assert.equal(estimateBytes(p, planFor(p), keepEverything(p)), p.size);
+});
+
+test("a file we already converted is not offered again", () => {
+  // Our own output: 10-bit HEVC, and on grainy material a high bits-per-pixel.
+  const p = probe({
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 40_000_000, hdr: null, colorTransfer: null },
+    audio: [audio({ codec: "ac3", bitrate: 640_000 })],
+  });
+  const untracked = assess(p);
+  assert.equal(untracked.videoWork, true, "without history it looks bloated, which is the trap");
+
+  const tracked = assess(p, undefined, {
+    path: p.path, convertedAt: Date.now(), originalSize: 40e9, newSize: 24e9,
+    encoder: "libx265", vmaf: 96.2, ffmpegVersion: "test", quarantinePath: "/q/x.mkv",
+  });
+  assert.equal(tracked.videoWork, false, "a file we produced must never be re-offered");
+  assert.equal(tracked.encoder, null);
+  assert.ok(tracked.chips.some((c) => c.label === "CONVERTED"));
+  assert.ok(!tracked.chips.some((c) => c.label === "BLOATED"));
+});
+
+test("10-bit alone is not HDR", () => {
+  const p = probe({
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4e6, hdr: null, colorTransfer: null },
+    audio: [audio({ codec: "eac3" })],
+  });
+  assert.ok(!assess(p).chips.some((c) => c.label === "HDR10"), "every file we output is 10-bit; none of them are HDR");
 });

@@ -47,20 +47,22 @@ export class Scanner {
       }
 
       if (stat.isDirectory()) {
-        entries.push({ name, path: full, kind: "dir", size: null, mtimeMs: stat.mtimeMs, probe: null, assessment: null });
+        entries.push({ name, path: full, kind: "dir", size: null, mtimeMs: stat.mtimeMs, probe: null, assessment: null, conversion: null });
         continue;
       }
       if (!stat.isFile()) continue;
 
       if (!this.isVideo(name)) {
-        entries.push({ name, path: full, kind: "other", size: stat.size, mtimeMs: stat.mtimeMs, probe: null, assessment: null });
+        entries.push({ name, path: full, kind: "other", size: stat.size, mtimeMs: stat.mtimeMs, probe: null, assessment: null, conversion: null });
         continue;
       }
 
       const cached = this.store.getProbe(full, stat.size, stat.mtimeMs);
+      const conversion = this.store.getConversion(full);
       const entry: DirEntry = {
         name, path: full, kind: "video", size: stat.size, mtimeMs: stat.mtimeMs,
-        probe: cached, assessment: cached ? assess(cached) : null,
+        probe: cached, assessment: cached ? assess(cached, undefined, conversion) : null,
+        conversion,
       };
       entries.push(entry);
       if (!cached) toProbe.push(entry);
@@ -94,7 +96,7 @@ export class Scanner {
           const probe = await probeFile(this.ffprobePath, entry.path);
           this.store.putProbe(probe);
           entry.probe = probe;
-          entry.assessment = assess(probe);
+          entry.assessment = assess(probe, undefined, entry.conversion);
         } catch {
           // A single unreadable file must not sink the directory listing.
           entry.probe = null;

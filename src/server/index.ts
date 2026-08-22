@@ -7,6 +7,9 @@ import { Store } from "./db.ts";
 import { Scanner } from "./scanner.ts";
 import { locate, type Binary } from "./binaries.ts";
 import { registerApi } from "./routes/api.ts";
+import { JobRunner } from "./jobs.ts";
+import { sweepTempDirs } from "./pipeline.ts";
+import { sweepQuarantine } from "./replace.ts";
 
 async function main(): Promise<void> {
   let config;
@@ -33,12 +36,26 @@ async function main(): Promise<void> {
   const store = new Store(config.dataDir);
   const scanner = new Scanner(config, store, ffprobe.path);
 
+  // A crash or a power cut mid-encode leaves temp files behind; clear them
+  // before anything else can trip over them. Quarantine is swept on the same
+  // pass so expired originals do not sit on the drive indefinitely.
+  const sweptTemp = sweepTempDirs(config.roots);
+  const sweptQuarantine = sweepQuarantine(config.roots);
+
+  const jobs = new JobRunner({
+    roots: config.roots,
+    ffmpegPath: ffmpeg?.path ?? "",
+    ffprobePath: ffprobe.path,
+    ffmpegVersion: ffmpeg?.version ?? "unknown",
+    store,
+  });
+
   const app = Fastify({
     logger: { transport: undefined, level: process.env.LOG_LEVEL ?? "info" },
     bodyLimit: 256 * 1024,
   });
 
-  await registerApi(app, { config, store, scanner, ffprobe, ffmpeg });
+  await registerApi(app, { config, store, scanner, ffprobe, ffmpeg, jobs });
 
   // Built UI, when it exists. In development Vite serves it on its own port
   // and proxies /api here, so this is absent and that is fine.
@@ -62,6 +79,10 @@ async function main(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`ffprobe ${ffprobe.version} (${ffprobe.source})`);
   app.log.info(`roots: ${config.roots.map((r) => r.label).join(", ")}`);
+  if (sweptTemp.length > 0) app.log.info(`cleared ${sweptTemp.length} temp dir(s) left by a previous run`);
+  if (sweptQuarantine.removed.length > 0) {
+    app.log.info(`quarantine sweep freed ${(sweptQuarantine.freedBytes / 1e9).toFixed(2)} GB`);
+  }
 }
 
 main().catch((err) => {

@@ -1,4 +1,4 @@
-import type { Probe, Assessment, Chip, AudioTrack } from "../shared/types.ts";
+import type { Probe, Assessment, Chip, AudioTrack, Conversion } from "../shared/types.ts";
 import {
   AUDIO_REPLACE, EFFICIENT_VIDEO, PREFERRED_LANGUAGES,
   planFor, primaryAudio, estimateBytes, keepEverything, subtitleBitrate,
@@ -11,7 +11,7 @@ export { AC3_BITRATE, HARDWARE_MIN_HEIGHT, bitsPerPixel } from "../shared/estima
 /** Above this, the extra language tracks are worth surfacing as removable. */
 const MANY_AUDIO_TRACKS = 3;
 
-export function assess(probe: Probe, selection?: Selection): Assessment {
+export function assess(probe: Probe, selection?: Selection, conversion?: Conversion | null): Assessment {
   const chips: Chip[] = [];
   const empty: Assessment = {
     videoWork: false, audioWork: false, encoder: null, bitsPerPixel: null,
@@ -32,6 +32,17 @@ export function assess(probe: Probe, selection?: Selection): Assessment {
   const plan = planFor(probe);
   const codec = video.codec.toLowerCase();
 
+  // Our own output is 10-bit HEVC, and on grainy material that lands above the
+  // bits-per-pixel threshold. Without this the app offers to convert the file
+  // it just produced, forever.
+  const alreadyConverted = Boolean(conversion);
+  if (alreadyConverted) {
+    plan.videoWork = false;
+    plan.audioWork = false;
+    plan.encoder = null;
+    plan.bloated = false;
+  }
+
   // ── video ────────────────────────────────────────────────────────────
   if (plan.replaceRatio !== undefined) {
     chips.push({ label: codecLabel(codec), tone: "bad", title: `${codecLabel(codec)} video — re-encoding to HEVC typically saves ${Math.round((1 - plan.replaceRatio) * 100)}%.` });
@@ -39,6 +50,18 @@ export function assess(probe: Probe, selection?: Selection): Assessment {
     chips.push({ label: codecLabel(codec), tone: "good", title: `${codecLabel(codec)} video — already an efficient codec.` });
   } else {
     chips.push({ label: codecLabel(codec), tone: "note", title: `${codecLabel(codec)} video.` });
+  }
+  if (alreadyConverted && conversion) {
+    const saved = conversion.originalSize - conversion.newSize;
+    chips.push({
+      label: "CONVERTED",
+      tone: "good",
+      title:
+        `Converted by Convertly on ${new Date(conversion.convertedAt).toLocaleDateString()} — ` +
+        `${(saved / 1e9).toFixed(2)} GB saved with ${conversion.encoder}` +
+        `${conversion.vmaf ? `, VMAF ${conversion.vmaf.toFixed(1)}` : ""}. ` +
+        `The original is in quarantine.`,
+    });
   }
   if (plan.bloated) {
     chips.push({ label: "BLOATED", tone: "warn", title: `${plan.bitsPerPixel!.toFixed(3)} bits per pixel — an efficient codec, but encoded at a far higher bitrate than it needs.` });
@@ -101,7 +124,7 @@ export function assess(probe: Probe, selection?: Selection): Assessment {
   const estimatedBytes = estimateBytes(probe, plan, chosen);
   const savingBytes = estimatedBytes === null ? null : Math.max(0, probe.size - estimatedBytes);
 
-  if (!plan.videoWork && !plan.audioWork) {
+  if (!plan.videoWork && !plan.audioWork && !alreadyConverted) {
     chips.push({ label: "OK", tone: "good", title: "Efficient video and compatible audio — nothing to do." });
   }
 

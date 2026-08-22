@@ -9,13 +9,16 @@ interface Props {
   selectedCount: number;
   isSelected: boolean;
   onApplyToSelection: (selection: Selection) => void;
+  onConvert: (selection: Selection) => void;
+  busy: boolean;
+  canConvert: boolean;
 }
 
 /**
  * Per-file track chooser. Read-only in phase 01 — it changes the projection,
  * not the file — but the choice it records is what phase 02 will act on.
  */
-export function TrackPanel({ entry, selection, onChange, selectedCount, isSelected, onApplyToSelection }: Props) {
+export function TrackPanel({ entry, selection, onChange, selectedCount, isSelected, onApplyToSelection, onConvert, busy, canConvert }: Props) {
   const probe = entry.probe;
   if (!probe) return null;
 
@@ -127,9 +130,13 @@ export function TrackPanel({ entry, selection, onChange, selectedCount, isSelect
           </button>
         )}
         <span className="spacer" />
-        <span className="tnote">
-          Phase 01 only projects this. Nothing is written until phase 02.
-        </span>
+        {canConvert ? (
+          <button className="convert" onClick={() => onConvert(selection)} disabled={busy}>
+            {busy ? "A job is running" : "Encode and check"}
+          </button>
+        ) : (
+          <span className="tnote">Nothing to do on this file.</span>
+        )}
       </div>
     </div>
   );

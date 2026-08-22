@@ -17,6 +17,8 @@ interface FfStream {
   height?: number;
   pix_fmt?: string;
   bits_per_raw_sample?: string;
+  color_transfer?: string;
+  color_primaries?: string;
   channels?: number;
   channel_layout?: string;
   bit_rate?: string;
@@ -107,6 +109,7 @@ function pickVideo(streams: FfStream[]): VideoTrack | null {
     fps: parseFps(s.avg_frame_rate),
     bitrate: toInt(s.bit_rate),
     hdr: detectHdr(s),
+    colorTransfer: s.color_transfer ?? null,
   };
 }
 
@@ -119,16 +122,22 @@ function bitDepth(s: FfStream): number | null {
   return 8;
 }
 
+/**
+ * HDR is a transfer function, not a bit depth.
+ *
+ * Every file Convertly produces is 10-bit HEVC, so inferring HDR from depth
+ * labelled our own output as HDR10 — and HDR is one of the signals that holds
+ * a file back from conversion. Only an actual PQ or HLG transfer counts.
+ */
 function detectHdr(s: FfStream): string | null {
   const sideData = s.side_data_list?.map((d) => d.side_data_type ?? "") ?? [];
   if (sideData.some((t) => t.includes("Dolby Vision"))) return "Dolby Vision";
-  if (sideData.some((t) => t.includes("HDR Dynamic Metadata"))) return "HDR10+";
-  const depth = bitDepth(s);
-  if (s.profile?.includes("Main 10") || (depth !== null && depth >= 10)) {
-    // 10-bit alone is not HDR, but on HEVC it usually accompanies it. Callers
-    // treat this as "check before converting" rather than a hard fact.
-    return s.codec_name === "hevc" ? "HDR10" : null;
+
+  const transfer = s.color_transfer?.toLowerCase() ?? "";
+  if (transfer === "smpte2084") {
+    return sideData.some((t) => t.includes("HDR Dynamic Metadata")) ? "HDR10+" : "HDR10";
   }
+  if (transfer === "arib-std-b67") return "HLG";
   return null;
 }
 

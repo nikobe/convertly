@@ -8,14 +8,8 @@ import { formatBytes } from "../shared/format.ts";
 
 const run = promisify(execFile);
 
-export type CheckStatus = "pass" | "fail" | "review" | "skipped";
-
-export interface Check {
-  id: string;
-  label: string;
-  status: CheckStatus;
-  detail: string;
-}
+export type { Check, CheckStatus } from "../shared/check.ts";
+import type { Check } from "../shared/check.ts";
 
 export interface VerifyResult {
   /** Safe to replace the original. */

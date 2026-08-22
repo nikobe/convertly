@@ -3,6 +3,8 @@ import type { BrowseResponse, Bookmark, HealthReport, Root, DirEntry } from "../
 import { api } from "./api.ts";
 import { bytes, duration } from "./format.ts";
 import { TrackPanel } from "./TrackPanel.tsx";
+import { JobPanel } from "./JobPanel.tsx";
+import type { Job } from "../shared/job.ts";
 import { planFor, estimateBytes, keepEverything, type Selection } from "../shared/estimate.ts";
 
 /**
@@ -36,6 +38,7 @@ export function App() {
   const [selections, setSelections] = useState<Map<string, Selection>>(new Map());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
 
   const go = useCallback(async (path?: string) => {
     setLoading(true);
@@ -53,6 +56,20 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // One live stream for job progress. SSE reconnects on its own.
+  useEffect(() => {
+    const source = new EventSource("/api/jobs/events");
+    source.addEventListener("snapshot", (event) => {
+      const all = JSON.parse((event as MessageEvent<string>).data) as Job[];
+      const active = all.find((j) => j.state === "encoding" || j.state === "review");
+      if (active) setJob(active);
+    });
+    source.addEventListener("job", (event) => {
+      setJob(JSON.parse((event as MessageEvent<string>).data) as Job);
+    });
+    return () => source.close();
   }, []);
 
   useEffect(() => {
@@ -159,6 +176,26 @@ export function App() {
   };
 
   const pinned = listing ? bookmarks.some((b) => b.path === listing.path) : false;
+  const busy = job !== null && (job.state === "encoding" || job.state === "verifying");
+
+  const convert = async (path: string, selection: Selection) => {
+    setNote(null);
+    try {
+      setJob(await api.startJob(path, selection, {}, false));
+    } catch (err) {
+      setNote((err as Error).message);
+    }
+  };
+
+  const jobAction = async (action: "accept" | "discard" | "cancel") => {
+    if (!job) return;
+    try {
+      await api.jobAction(job.id, action);
+      if (action !== "cancel") void go(listing?.path);
+    } catch (err) {
+      setNote((err as Error).message);
+    }
+  };
 
   return (
     <div className="app">
@@ -246,6 +283,8 @@ export function App() {
                 anySelected={selected.size > 0}
                 selectedCount={selected.size}
                 onApplyTracks={applyTracksToSelection}
+                onConvert={convert}
+                busy={busy}
                 expanded={expanded}
                 onExpand={(path) => setExpanded((prev) => (prev === path ? null : path))}
                 selections={selections}
@@ -257,6 +296,16 @@ export function App() {
           </div>
         </main>
       </div>
+
+      {job && (
+        <JobPanel
+          job={job}
+          onAccept={() => jobAction("accept")}
+          onDiscard={() => jobAction("discard")}
+          onCancel={() => jobAction("cancel")}
+          onDismiss={() => setJob(null)}
+        />
+      )}
 
       <footer className="foot">
         <span>
@@ -296,7 +345,7 @@ function Hud({ health }: { health: HealthReport | null }) {
 
 function Listing({
   listing, selected, onToggle, onOpen, allSelected, onToggleAll, anySelected, selectedCount,
-  onApplyTracks, expanded, onExpand, selections, onSelectionChange,
+  onApplyTracks, onConvert, busy, expanded, onExpand, selections, onSelectionChange,
 }: {
   listing: BrowseResponse;
   selected: Set<string>;
@@ -307,6 +356,8 @@ function Listing({
   anySelected: boolean;
   selectedCount: number;
   onApplyTracks: (path: string, selection: Selection) => void;
+  onConvert: (path: string, selection: Selection) => void;
+  busy: boolean;
   expanded: string | null;
   onExpand: (path: string) => void;
   selections: Map<string, Selection>;
@@ -356,6 +407,8 @@ function Listing({
             onOpen={() => onOpen(entry.path)}
             selectedCount={selectedCount}
             onApplyTracks={(sel) => onApplyTracks(entry.path, sel)}
+            onConvert={(sel) => onConvert(entry.path, sel)}
+            busy={busy}
             expanded={expanded === entry.path}
             onExpand={() => onExpand(entry.path)}
             selection={selections.get(entry.path)}
@@ -368,7 +421,7 @@ function Listing({
 }
 
 function Row({
-  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks,
+  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks, onConvert, busy,
   expanded, onExpand, selection, onSelectionChange,
 }: {
   entry: DirEntry;
@@ -377,6 +430,8 @@ function Row({
   onOpen: () => void;
   selectedCount: number;
   onApplyTracks: (selection: Selection) => void;
+  onConvert: (selection: Selection) => void;
+  busy: boolean;
   expanded: boolean;
   onExpand: () => void;
   selection: Selection | undefined;
@@ -462,6 +517,9 @@ function Row({
               selectedCount={selectedCount}
               isSelected={checked}
               onApplyToSelection={onApplyTracks}
+              onConvert={onConvert}
+              busy={busy}
+              canConvert={Boolean(a && (a.videoWork || a.audioWork || selection) && !a.blockedReason)}
             />
           </td>
         </tr>

@@ -134,7 +134,7 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
   }
 
   if (dryRun) {
-    return base("review", "Dry run — verified but the original was deliberately left in place.", {
+    return base("review", "Encoded and verified. The original is untouched — accept to swap it in.", {
       ...withChecks,
       pendingPath: tempPath,
     });

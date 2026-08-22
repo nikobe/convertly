@@ -18,7 +18,7 @@ function probe(over: Partial<Probe> = {}): Probe {
   return {
     path: "/m/film.mkv", size: 24e9, mtimeMs: 1, durationSec: 7200, container: "matroska",
     chapters: 12, probedAt: 0, error: null, subtitles: [sub()],
-    video: { index: 0, codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 25e6, hdr: null },
+    video: { index: 0, codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 25e6, hdr: null, colorTransfer: null },
     audio: [audio()],
     ...over,
   };
@@ -42,7 +42,7 @@ test("1080p h264 uses software x265 at the preset's CRF", () => {
 });
 
 test("4K uses the hardware encoder", () => {
-  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60e6, hdr: null } });
+  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60e6, hdr: null, colorTransfer: null } });
   const { args, encoder } = build(p);
   assert.equal(encoder, "hevc_videotoolbox");
   assert.equal(arg(args, "-pix_fmt"), "p010le");
@@ -50,7 +50,7 @@ test("4K uses the hardware encoder", () => {
 });
 
 test("bitrates are emitted as integers — this ffmpeg build rejects 5M", () => {
-  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60e6, hdr: null } });
+  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60e6, hdr: null, colorTransfer: null } });
   const { args } = build(p);
   const bv = arg(args, "-b:v")!;
   assert.match(bv, /^\d+$/, `-b:v must be a plain integer, got ${bv}`);
@@ -109,7 +109,7 @@ test("chapters and metadata are always carried over", () => {
 
 test("an efficient file with compatible audio copies the video stream", () => {
   const p = probe({
-    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4e6, hdr: null },
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4e6, hdr: null, colorTransfer: null },
     audio: [audio({ codec: "eac3", bitrate: 768_000 })],
   });
   const { encoder, args } = build(p);
@@ -125,7 +125,7 @@ test("resolution is untouched unless a cap is set deliberately", () => {
 
 test("a cap forces a re-encode even when the codec is already fine", () => {
   const p = probe({
-    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4e6, hdr: null },
+    video: { index: 0, codec: "hevc", width: 1920, height: 1080, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 4e6, hdr: null, colorTransfer: null },
     audio: [audio({ codec: "eac3" })],
   });
   assert.equal(build(p, { ...DEFAULT_PRESET, maxHeight: 720 }).encoder, "libx265");
@@ -147,14 +147,14 @@ test("refuses to drop every audio track", () => {
 });
 
 test("hardware bitrate stays inside sane bounds", () => {
-  const tiny = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 1e6, hdr: null } });
+  const tiny = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 1e6, hdr: null, colorTransfer: null } });
   assert.ok(hardwareBitrate(tiny, DEFAULT_PRESET) >= 8_000_000, "floor protects against a bad probe");
-  const huge = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 400e6, hdr: null } });
+  const huge = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 400e6, hdr: null, colorTransfer: null } });
   assert.ok(hardwareBitrate(huge, DEFAULT_PRESET) <= 40_000_000 * 1.01, "ceiling protects the disk");
 });
 
 test("a lower CRF asks the hardware encoder for more bits", () => {
-  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 30e6, hdr: null } });
+  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 30e6, hdr: null, colorTransfer: null } });
   assert.ok(hardwareBitrate(p, { ...DEFAULT_PRESET, crf: 16 }) > hardwareBitrate(p, { ...DEFAULT_PRESET, crf: 24 }));
 });
 

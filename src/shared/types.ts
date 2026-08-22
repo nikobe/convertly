@@ -42,6 +42,8 @@ export interface VideoTrack {
   bitrate: number | null;
   /** HDR10, HDR10+, Dolby Vision, HLG — null when SDR. */
   hdr: string | null;
+  /** Transfer characteristics, e.g. smpte2084 for PQ. The actual HDR signal. */
+  colorTransfer: string | null;
 }
 
 export interface SubtitleTrack {
@@ -93,6 +95,7 @@ export interface DirEntry {
   mtimeMs: number | null;
   probe: Probe | null;
   assessment: Assessment | null;
+  conversion: Conversion | null;
 }
 
 export interface BrowseResponse {
@@ -111,6 +114,18 @@ export interface Bookmark {
   path: string;
   rootId: string;
   createdAt: number;
+}
+
+/** A file Convertly has already converted. */
+export interface Conversion {
+  path: string;
+  convertedAt: number;
+  originalSize: number;
+  newSize: number;
+  encoder: string;
+  vmaf: number | null;
+  ffmpegVersion: string;
+  quarantinePath: string;
 }
 
 export interface HealthReport {

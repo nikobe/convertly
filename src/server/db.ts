@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Probe, Bookmark } from "../shared/types.ts";
+import type { Probe, Bookmark, Conversion } from "../shared/types.ts";
 
 export class Store {
   private db: DatabaseSync;
@@ -32,6 +32,17 @@ export class Store {
         path       TEXT NOT NULL UNIQUE,
         root_id    TEXT NOT NULL,
         created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS conversions (
+        path            TEXT PRIMARY KEY,
+        converted_at    INTEGER NOT NULL,
+        original_size   INTEGER NOT NULL,
+        new_size        INTEGER NOT NULL,
+        encoder         TEXT NOT NULL,
+        vmaf            REAL,
+        ffmpeg_version  TEXT NOT NULL,
+        quarantine_path TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS settings (
@@ -79,6 +90,63 @@ export class Store {
     return row.n;
   }
 
+  /**
+   * Record a completed conversion.
+   *
+   * Not bookkeeping for its own sake: without it the scanner sees our own
+   * 10-bit HEVC output, notices a high bits-per-pixel on grainy material, and
+   * cheerfully offers to convert it again.
+   */
+  recordConversion(row: Conversion): void {
+    this.db
+      .prepare(
+        `INSERT INTO conversions
+           (path, converted_at, original_size, new_size, encoder, vmaf, ffmpeg_version, quarantine_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(path) DO UPDATE SET
+           converted_at = excluded.converted_at, original_size = excluded.original_size,
+           new_size = excluded.new_size, encoder = excluded.encoder, vmaf = excluded.vmaf,
+           ffmpeg_version = excluded.ffmpeg_version, quarantine_path = excluded.quarantine_path`,
+      )
+      .run(row.path, row.convertedAt, row.originalSize, row.newSize, row.encoder, row.vmaf, row.ffmpegVersion, row.quarantinePath);
+  }
+
+  getConversion(path: string): Conversion | null {
+    const row = this.db
+      .prepare(`SELECT path, converted_at, original_size, new_size, encoder, vmaf, ffmpeg_version, quarantine_path
+                FROM conversions WHERE path = ?`)
+      .get(path) as Record<string, unknown> | undefined;
+    return row ? toConversion(row) : null;
+  }
+
+  /** Conversions for a set of paths, for annotating one directory listing. */
+  getConversions(paths: string[]): Map<string, Conversion> {
+    const out = new Map<string, Conversion>();
+    if (paths.length === 0) return out;
+    const statement = this.db.prepare(
+      `SELECT path, converted_at, original_size, new_size, encoder, vmaf, ffmpeg_version, quarantine_path
+       FROM conversions WHERE path = ?`,
+    );
+    for (const path of paths) {
+      const row = statement.get(path) as Record<string, unknown> | undefined;
+      if (row) out.set(path, toConversion(row));
+    }
+    return out;
+  }
+
+  /** Running total of space recovered. */
+  savings(): { files: number; bytes: number } {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS files, COALESCE(SUM(original_size - new_size), 0) AS bytes FROM conversions")
+      .get() as { files: number; bytes: number };
+    return { files: row.files, bytes: row.bytes };
+  }
+
+  /** Forget a conversion — used when an original is restored. */
+  forgetConversion(path: string): void {
+    this.db.prepare("DELETE FROM conversions WHERE path = ?").run(path);
+  }
+
   listBookmarks(): Bookmark[] {
     const rows = this.db
       .prepare("SELECT id, label, path, root_id, created_at FROM bookmarks ORDER BY label COLLATE NOCASE")
@@ -107,4 +175,17 @@ export class Store {
   close(): void {
     this.db.close();
   }
+}
+
+function toConversion(row: Record<string, unknown>): Conversion {
+  return {
+    path: row.path as string,
+    convertedAt: row.converted_at as number,
+    originalSize: row.original_size as number,
+    newSize: row.new_size as number,
+    encoder: row.encoder as string,
+    vmaf: (row.vmaf as number | null) ?? null,
+    ffmpegVersion: row.ffmpeg_version as string,
+    quarantinePath: row.quarantine_path as string,
+  };
 }

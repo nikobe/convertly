@@ -257,3 +257,79 @@ tr.detail:hover { background: var(--panel); }
 .tactions button.apply:hover { background: var(--amber); color: var(--ground); }
 thead th.pick { text-align: center; }
 .foot .note { color: var(--amber-dim); text-transform: none; letter-spacing: 0.04em; }
+
+/* ── running job ───────────────────────────────────────── */
+
+.job {
+  border-top: 1px solid var(--rule-hi);
+  background: var(--panel);
+  padding: 0.7rem 1rem 0.8rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+  max-height: 45vh; overflow-y: auto;
+}
+.job-failed { border-top-color: var(--crit); }
+.job-replaced { border-top-color: var(--ok); }
+.job-review { border-top-color: var(--amber); }
+
+.jhead { display: flex; align-items: baseline; gap: 0.75rem; }
+.jhead .spacer { flex: 1; }
+.jstate {
+  font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+  border: 1px solid var(--rule-hi); color: var(--text-dim); padding: 0.05rem 0.4rem; flex: none;
+}
+.jstate.encoding, .jstate.verifying { border-color: var(--amber); color: var(--amber); }
+.jstate.review { border-color: var(--amber-hi); color: var(--amber-hi); }
+.jstate.replaced { border-color: var(--ok); color: var(--ok); }
+.jstate.failed { border-color: var(--crit); color: var(--crit); }
+.jname { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.jbtn {
+  border: 1px solid var(--rule-hi); color: var(--text-dim);
+  padding: 0.15rem 0.7rem; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+}
+.jbtn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+.jbtn.go { border-color: var(--amber); color: var(--amber); }
+.jbtn.go:hover { background: var(--amber); color: var(--ground); }
+.jbtn.quiet { border-color: var(--rule); color: var(--text-faint); }
+
+.jprogress { display: flex; flex-direction: column; gap: 0.35rem; }
+.jprogress .bar { height: 12px; border: 1px solid var(--amber-dim); background: var(--ground); }
+.jprogress .bar i { display: block; height: 100%; background: var(--amber); transition: width 0.4s linear; }
+.jstats {
+  display: flex; gap: 1.25rem; flex-wrap: wrap;
+  font-size: 11px; letter-spacing: 0.08em; color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.jstats .eta { color: var(--amber-hi); }
+
+.jmessage { margin: 0; color: var(--text); font-size: 12px; }
+
+.jchecks { display: flex; flex-direction: column; gap: 1px; }
+.jcheck { display: grid; grid-template-columns: 4.5rem 9rem 1fr; gap: 0.6rem; font-size: 11px; padding: 0.1rem 0; }
+.jcheck .cs { text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); }
+.jcheck.pass .cs { color: var(--ok); }
+.jcheck.fail .cs { color: var(--crit); }
+.jcheck.review .cs { color: var(--warn); }
+.jcheck .cl { color: var(--text-dim); }
+.jcheck .cd { color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 50rem) { .jcheck { grid-template-columns: 4.5rem 1fr; } .jcheck .cd { grid-column: 1 / -1; } }
+
+.jactions {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding-top: 0.5rem; border-top: 1px solid var(--rule);
+}
+.jactions .spacer { flex: 1; }
+.jnote { font-size: 11px; color: var(--text-faint); max-width: 46ch; }
+
+.jcmd { font-size: 11px; color: var(--text-faint); }
+.jcmd summary { cursor: pointer; letter-spacing: 0.08em; }
+.jcmd summary:hover { color: var(--amber-dim); }
+.jcmd code {
+  display: block; margin-top: 0.4rem; padding: 0.5rem;
+  background: var(--ground); border: 1px solid var(--rule);
+  color: var(--text-dim); overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+}
+
+.tactions button.convert { border-color: var(--amber); color: var(--amber); }
+.tactions button.convert:hover:not(:disabled) { background: var(--amber); color: var(--ground); }
+.tactions button.convert:disabled { border-color: var(--rule); color: var(--text-faint); }
