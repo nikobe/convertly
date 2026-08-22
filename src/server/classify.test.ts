@@ -13,7 +13,7 @@ function probe(over: Partial<Probe> = {}): Probe {
   };
 }
 function audio(over: Partial<AudioTrack>): AudioTrack {
-  return { index: 1, codec: "dts", channels: 6, channelLayout: "5.1", language: "eng", title: null, bitrate: 1_500_000, hasAtmos: false, ...over };
+  return { index: 1, codec: "dts", channels: 6, channelLayout: "5.1", language: "eng", title: null, bitrate: 1_500_000, hasAtmos: false, isDefault: false, ...over };
 }
 const labels = (p: Probe) => assess(p).chips.map((c) => c.label);
 
@@ -101,11 +101,49 @@ test("an unreadable file reports the ffprobe error rather than guessing", () => 
   assert.equal(a.estimatedBytes, null);
 });
 
-test("primaryAudio picks the widest track", () => {
+test("primaryAudio picks the widest track when languages match", () => {
   const stereo = audio({ index: 1, channels: 2 });
   const surround = audio({ index: 2, channels: 6 });
   assert.equal(primaryAudio([stereo, surround])?.index, 2);
   assert.equal(primaryAudio([]), null);
+});
+
+test("primaryAudio prefers your language over a wider foreign track", () => {
+  // The shape of a real release: eight foreign-language dubs, one English stereo.
+  const dubs = [1, 2, 3, 4, 5, 6, 7, 8].map((i) =>
+    audio({ index: i, codec: "ac3", channels: 6, language: "rus", bitrate: 448_000, isDefault: i === 1 }),
+  );
+  const english = audio({ index: 9, codec: "ac3", channels: 2, language: "eng", bitrate: 320_000 });
+  assert.equal(primaryAudio([...dubs, english])?.index, 9);
+});
+
+test("an explicit English tag beats a wider untagged track", () => {
+  // On a foreign release the untagged 5.1 is usually a dub, not the original.
+  const untagged = audio({ index: 1, codec: "ac3", channels: 6, language: null, bitrate: 384_000 });
+  const english = audio({ index: 2, codec: "ac3", channels: 2, language: "eng", bitrate: 320_000 });
+  assert.equal(primaryAudio([untagged, english])?.index, 2);
+});
+
+test("an untagged track still beats a tagged foreign one", () => {
+  const dub = audio({ index: 1, codec: "ac3", channels: 6, language: "rus" });
+  const untagged = audio({ index: 2, codec: "ac3", channels: 6, language: null });
+  assert.equal(primaryAudio([dub, untagged])?.index, 2);
+});
+
+test("primaryAudio falls back to channels when nothing is tagged with a language", () => {
+  const a = audio({ index: 1, channels: 2, language: null });
+  const b = audio({ index: 2, channels: 6, language: null });
+  assert.equal(primaryAudio([a, b])?.index, 2);
+});
+
+test("a pile of dub tracks is surfaced as a chip", () => {
+  const tracks = [1, 2, 3, 4, 5].map((i) =>
+    audio({ index: i, codec: "ac3", channels: 6, language: i === 5 ? "eng" : "rus", bitrate: 448_000 }),
+  );
+  const a = assess(probe({ audio: tracks }));
+  const chip = a.chips.find((c) => c.label === "5 AUDIO");
+  assert.ok(chip, "expected a track-count chip");
+  assert.match(chip!.title, /eng/);
 });
 
 test("bitsPerPixel returns null when any input is missing", () => {

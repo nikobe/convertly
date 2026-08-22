@@ -27,6 +27,8 @@ export interface AudioTrack {
   bitrate: number | null;
   /** TrueHD/EAC3 streams carrying Atmos objects. Excluded from replace by default. */
   hasAtmos: boolean;
+  /** The track the muxer marks as default. */
+  isDefault: boolean;
 }
 
 export interface VideoTrack {

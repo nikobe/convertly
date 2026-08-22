@@ -144,6 +144,7 @@ function toAudio(s: FfStream): AudioTrack {
     title: s.tags?.title ?? null,
     bitrate: toInt(s.bit_rate),
     hasAtmos: /atmos/i.test(profile) || /atmos/i.test(s.tags?.title ?? ""),
+    isDefault: Boolean(s.disposition?.default),
   };
 }
 

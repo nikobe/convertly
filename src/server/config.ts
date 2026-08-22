@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { resolve, isAbsolute } from "node:path";
+import { homedir } from "node:os";
 import type { Root } from "../shared/types.ts";
 
 export interface Config {
@@ -76,15 +77,19 @@ function parseRoots(value: unknown, configPath: string): Root[] {
     const { id, label, path: rootPath } = entry as Record<string, unknown>;
     if (typeof id !== "string" || !id) throw new ConfigError(`roots[${i}].id must be a non-empty string.`);
     if (typeof label !== "string" || !label) throw new ConfigError(`roots[${i}].label must be a non-empty string.`);
-    if (typeof rootPath !== "string" || !isAbsolute(rootPath)) {
-      throw new ConfigError(`roots[${i}].path must be an absolute path.`);
+    if (typeof rootPath !== "string" || !rootPath) {
+      throw new ConfigError(`roots[${i}].path must be a path.`);
+    }
+    const expanded = expandHome(rootPath);
+    if (!isAbsolute(expanded)) {
+      throw new ConfigError(`roots[${i}].path must be absolute or start with "~/". Got: ${rootPath}`);
     }
     if (seen.has(id)) throw new ConfigError(`Duplicate root id "${id}".`);
     seen.add(id);
 
     // Canonicalise now if the volume is mounted. An unmounted drive is not a
     // config error — the health check reports it and browsing it fails cleanly.
-    let canonical = resolve(rootPath);
+    let canonical = resolve(expanded);
     try {
       canonical = realpathSync(canonical);
     } catch {
@@ -92,4 +97,11 @@ function parseRoots(value: unknown, configPath: string): Root[] {
     }
     return { id, label, path: canonical };
   });
+}
+
+/** Expand a leading ~ so a config can move between machines unchanged. */
+export function expandHome(value: string): string {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/")) return resolve(homedir(), value.slice(2));
+  return value;
 }

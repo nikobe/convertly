@@ -87,6 +87,25 @@ export function assess(probe: Probe): Assessment {
   const audioWork = probe.audio.some((a) => AUDIO_REPLACE.has(a.codec.toLowerCase()));
   for (const chip of audioChips(probe.audio)) chips.push(chip);
 
+  // Extra dub tracks are often a bigger saving than the video re-encode.
+  if (probe.audio.length > MANY_AUDIO_TRACKS && probe.durationSec) {
+    const spareBits = probe.audio
+      .filter((t) => !primary || t.index !== primary.index)
+      .reduce((sum, t) => sum + (t.bitrate ?? 0), 0);
+    const spareBytes = (spareBits * probe.durationSec) / 8;
+    const kept = primary
+      ? `${primary.language ?? "untagged"} ${primary.channels}ch ${primary.codec.toUpperCase()}`
+      : "none";
+    chips.push({
+      label: `${probe.audio.length} AUDIO`,
+      tone: "warn",
+      title:
+        `${probe.audio.length} audio tracks. Convertly would keep ${kept}; dropping the rest saves about ` +
+        `${(spareBytes / 1e9).toFixed(2)} GB — often more than the video re-encode itself. ` +
+        `You can override which track is kept when queueing. Track cleanup lands in phase 05.`,
+    });
+  }
+
   // ── things to leave alone ────────────────────────────────────────────
   let blockedReason: string | null = null;
   if (probe.audio.some((a) => a.hasAtmos)) {
@@ -118,11 +137,36 @@ export function bitsPerPixel(bitrate: number | null, width: number, height: numb
   return Number.isFinite(value) ? value : null;
 }
 
-/** The track a player would pick: most channels, tie-broken by stream order. */
+/** Languages treated as "yours" when choosing which track to keep. */
+const PREFERRED_LANGUAGES = new Set(["eng", "en"]);
+/** Tags meaning "nobody said" — better than a foreign dub, worse than an explicit match. */
+const UNTAGGED = new Set(["und", "unk", ""]);
+
+/**
+ * The track worth keeping and re-encoding.
+ *
+ * Channel count alone is not enough: a release with eight foreign-language 5.1 dubs and
+ * one English stereo track would otherwise have a foreign-language track chosen as the
+ * one to preserve. Language wins first, then channels, then the default flag.
+ */
 export function primaryAudio(tracks: AudioTrack[]): AudioTrack | null {
   if (tracks.length === 0) return null;
-  return tracks.reduce((best, t) => (t.channels > best.channels ? t : best), tracks[0]!);
+  const score = (t: AudioTrack): number => {
+    const language = t.language?.toLowerCase() ?? "und";
+    let value = 0;
+    // An explicit English tag beats an untagged track even if the untagged one
+    // is wider: on a foreign release the 5.1 with no tag is usually a dub.
+    if (PREFERRED_LANGUAGES.has(language)) value += 2000;
+    else if (UNTAGGED.has(language)) value += 1000;
+    value += Math.min(t.channels, 8) * 10;
+    if (t.isDefault) value += 5;
+    return value;
+  };
+  return tracks.reduce((best, t) => (score(t) > score(best) ? t : best), tracks[0]!);
 }
+
+/** Above this, the extra language tracks are worth surfacing as removable. */
+const MANY_AUDIO_TRACKS = 3;
 
 interface EstimateInput {
   videoWork: boolean;
