@@ -1,0 +1,43 @@
+# ── macOS ──────────────────────────────────
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# ── node ───────────────────────────────────
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+npm-debug.log*
+.npm/
+
+# ── convertly runtime state ────────────────
+# SQLite: probe cache, queue, presets, bookmarks, history.
+# Never commit — it is host-specific and can be large.
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+data/
+logs/
+*.log
+
+# Pinned ffmpeg lives beside the app but is not source.
+vendor/ffmpeg/
+bin/ffmpeg
+bin/ffprobe
+
+# Scratch space used during encodes.
+.convertly-tmp/
+quarantine/
+
+# ── secrets ────────────────────────────────
+# Radarr / Sonarr / Plex API keys and the LAN access token.
+.env
+.env.*
+!.env.example
+config.local.*
