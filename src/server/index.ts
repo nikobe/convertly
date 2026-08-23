@@ -10,6 +10,7 @@ import { registerApi } from "./routes/api.ts";
 import { parseClientRules, isClientAllowed, isExposedHost, reachableUrls } from "./access.ts";
 import { Queue } from "./queue.ts";
 import { Integrations } from "./integrations.ts";
+import { Governors } from "./governors.ts";
 import { sweepTempDirs } from "./pipeline.ts";
 import { sweepQuarantine } from "./replace.ts";
 
@@ -45,10 +46,12 @@ async function main(): Promise<void> {
   const sweptQuarantine = sweepQuarantine(config.roots);
 
   const integrations = new Integrations(config.integrations);
+  const governors = new Governors(config.governors, config.integrations.plex);
 
   const queue = new Queue({
     store,
     integrations,
+    governors,
     roots: config.roots,
     ffmpegPath: ffmpeg?.path ?? "",
     ffprobePath: ffprobe.path,
@@ -69,7 +72,7 @@ async function main(): Promise<void> {
     return reply.code(403).send({ error: "Not permitted from this address." });
   });
 
-  await registerApi(app, { config, store, scanner, ffprobe, ffmpeg, queue, integrations });
+  await registerApi(app, { config, store, scanner, ffprobe, ffmpeg, queue, integrations, governors });
 
   // Built UI, when it exists. In development Vite serves it on its own port
   // and proxies /api here, so this is absent and that is fine.

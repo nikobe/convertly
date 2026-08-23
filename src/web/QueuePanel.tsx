@@ -53,8 +53,10 @@ export function QueuePanel({
       </div>
 
       {!running && (
-        <p className="qpaused">
-          Paused. The job that was running finishes; nothing new starts until you resume.
+        <p className={`qpaused${snapshot.heldBy && snapshot.heldBy !== "paused" ? " governed" : ""}`}>
+          {snapshot.heldBy === "paused" || !snapshot.holdReason
+            ? "Paused. The job that was running finishes; nothing new starts until you resume."
+            : `Holding — ${snapshot.holdReason}. It starts again on its own.`}
         </p>
       )}
 

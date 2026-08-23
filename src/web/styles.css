@@ -515,3 +515,6 @@ td.name button.expander .fname { flex: 1; }
   color: var(--ground); background: var(--amber-hi);
   padding: 0 0.3rem; margin-left: 0.1rem;
 }
+
+.qpaused.governed { color: var(--amber-hi); }
+.hud .queuebtn.held { border-color: var(--warn); color: var(--warn); }

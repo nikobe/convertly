@@ -39,6 +39,35 @@ server on port 5273, proxying `/api` to the API.
 | `radarr` / `sonarr` | `{ "url": "...", "apiKey": "..." }`. Optional. |
 | `plex` | `{ "url": "...", "token": "..." }`. Optional. |
 
+## When it is allowed to work
+
+Governors decide whether the queue may start, and can suspend a running
+encode without losing it. Each is independent; all are optional.
+
+```json
+{
+  "governors": {
+    "window":   { "enabled": true, "from": "01:00", "to": "08:30" },
+    "rhythm":   { "enabled": true, "workMinutes": 90, "restMinutes": 20 },
+    "thermal":  { "enabled": true, "maxLevel": 0 },
+    "playback": { "enabled": true },
+    "disk":     { "enabled": true, "headroomBytes": 5368709120 }
+  }
+}
+```
+
+| Governor | What it does |
+| --- | --- |
+| `window` | Only work between two times. Windows crossing midnight are handled. |
+| `rhythm` | Work a stint, then idle, so the machine is not pinned all night. |
+| `thermal` | Back off while the CPU reports it is throttling. |
+| `playback` | Stop while anyone is streaming from Plex. Needs the `plex` block. |
+| `disk` | Refuse to start without room for the output alongside the original. |
+
+Thermal and playback are on by default; the scheduling ones are off, because
+they stop work happening and that should be asked for. A suspended encode is
+`SIGSTOP`, so nothing is lost and nothing is recomputed when it resumes.
+
 ## Telling Radarr, Sonarr and Plex
 
 Optional, and off until you add credentials:

@@ -163,8 +163,8 @@ filesystem without going through it.
    still to do, and there is no UI trigger yet — jobs run via `runJob`.)*
 3. The queue *(built)*: persistent in SQLite, SSE progress, pause/resume,
    cancel, add-while-running, accept/discard per item.
-4. Governors: time window, batch rhythm, thermal ceiling, playback-aware
-   pause, disk guard.
+4. Governors *(built)*: time window, batch rhythm, thermal ceiling,
+   playback-aware pause, disk guard.
 5. Polish: smart lists, savings ledger, sample estimator, review tray.
 
 ## Audio and subtitle track selection
@@ -236,6 +236,28 @@ a power cut mid-batch resumes where it stopped: anything still marked
 - A `review` item keeps its encode on disk, so accepting later costs no
   re-encode. Removing or discarding it deletes that file rather than orphaning
   it.
+
+## Governors
+
+`governors.ts` decides whether the queue may work. The pure rules are in
+`src/shared/governors.ts` so they are testable without a clock, a thermometer
+or a media server.
+
+- **A held queue does not spin.** It stops and a 30-second timer re-checks, so
+  waiting out an overnight window costs nothing.
+- **A governor turning hostile mid-encode suspends the process**, it does not
+  kill it — `SIGSTOP` loses no work, which is what makes a 15-second check
+  affordable.
+- **Windows crossing midnight are the normal case** (22:00–06:00). Treating
+  the window as a simple range would mean it never opened.
+- **Thermal uses `machdep.xcpm.cpu_thermal_level` (Intel) or `pmset -g therm`,
+  never load average** — during an encode load is pinned by design and says
+  nothing about heat. When no sensor is available the governor reports that
+  and stands aside rather than blocking.
+- **The disk guard assumes the worst case**: the encode is written beside the
+  original, so both exist at once and the output might not be smaller.
+- Defaults: thermal, playback and disk on; window and rhythm off, because they
+  stop work happening and should be asked for.
 
 ## The encode pipeline
 

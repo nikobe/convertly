@@ -436,17 +436,25 @@ function Hud({
 
       {/* The queue has to be reachable, not just appear when you add to it. */}
       <button
-        className={`qopen queuebtn${active ? " live" : ""}${needsYou > 0 ? " needs" : ""}`}
+        className={`qopen queuebtn${active ? " live" : ""}${needsYou > 0 ? " needs" : ""}${
+          queue && !queue.running && queue.heldBy && queue.heldBy !== "paused" ? " held" : ""
+        }`}
         onClick={onOpenQueue}
-        title={active ? `Encoding ${active.name}` : waiting > 0 ? `${waiting} waiting` : "Nothing queued"}
+        title={
+          queue?.holdReason ? queue.holdReason
+          : active ? `Encoding ${active.name}`
+          : waiting > 0 ? `${waiting} waiting` : "Nothing queued"
+        }
       >
         <span className="qlabel">Queue</span>
         <span className="qvalue">
           {active
             ? `${Math.round(((active.progress?.fraction ?? 0) * 100))}%${waiting ? ` · ${waiting} to go` : ""}`
-            : waiting > 0
-              ? `${waiting} waiting`
-              : queue && !queue.running ? "paused" : "idle"}
+            : queue && !queue.running && queue.heldBy && queue.heldBy !== "paused"
+              ? `held · ${waiting} waiting`
+              : waiting > 0
+                ? `${waiting} waiting`
+                : queue && !queue.running ? "paused" : "idle"}
         </span>
         {needsYou > 0 && <span className="needsyou">{needsYou} to review</span>}
       </button>

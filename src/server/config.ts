@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import type { Root } from "../shared/types.ts";
 import { DEFAULT_ALLOWED_CLIENTS, parseClientRule, AccessRuleError } from "./access.ts";
 import type { IntegrationsConfig } from "./integrations.ts";
+import { DEFAULT_GOVERNORS, parseClock, type GovernorConfig } from "../shared/governors.ts";
 
 export interface Config {
   host: string;
@@ -19,6 +20,8 @@ export interface Config {
   allowedClients: string[];
   /** Optional: told about a swap so their databases stay accurate. */
   integrations: IntegrationsConfig;
+  /** When the queue is allowed to work. */
+  governors: GovernorConfig;
 }
 
 const DEFAULTS = {
@@ -71,6 +74,7 @@ export function loadConfig(path = process.env.CONVERTLY_CONFIG ?? "config/conver
       : DEFAULTS.videoExtensions,
     dataDir: typeof obj.dataDir === "string" ? obj.dataDir : "data",
     allowedClients: parseAllowedClients(obj.allowedClients),
+    governors: parseGovernors(obj.governors),
     integrations: {
       radarr: parseService(obj.radarr, "radarr", "apiKey"),
       sonarr: parseService(obj.sonarr, "sonarr", "apiKey"),
@@ -101,6 +105,30 @@ function parseAllowedClients(value: unknown): string[] {
  * A service block is all-or-nothing: a URL with no key would fail on every
  * request, which is worse than being switched off.
  */
+/** Merged over the defaults so a partial block is fine. */
+function parseGovernors(value: unknown): GovernorConfig {
+  const obj = (typeof value === "object" && value !== null ? value : {}) as Record<string, Record<string, unknown>>;
+  const merged: GovernorConfig = {
+    window: { ...DEFAULT_GOVERNORS.window, ...(obj.window ?? {}) } as GovernorConfig["window"],
+    rhythm: { ...DEFAULT_GOVERNORS.rhythm, ...(obj.rhythm ?? {}) } as GovernorConfig["rhythm"],
+    thermal: { ...DEFAULT_GOVERNORS.thermal, ...(obj.thermal ?? {}) } as GovernorConfig["thermal"],
+    playback: { ...DEFAULT_GOVERNORS.playback, ...(obj.playback ?? {}) } as GovernorConfig["playback"],
+    disk: { ...DEFAULT_GOVERNORS.disk, ...(obj.disk ?? {}) } as GovernorConfig["disk"],
+  };
+  // A window that cannot be parsed would silently never open, so refuse it.
+  if (merged.window.enabled) {
+    for (const key of ["from", "to"] as const) {
+      if (parseClock(merged.window[key]) === null) {
+        throw new ConfigError(`governors.window.${key} must be "HH:MM", got "${merged.window[key]}".`);
+      }
+    }
+  }
+  if (merged.rhythm.enabled && (merged.rhythm.workMinutes <= 0 || merged.rhythm.restMinutes < 0)) {
+    throw new ConfigError("governors.rhythm needs a positive workMinutes and a non-negative restMinutes.");
+  }
+  return merged;
+}
+
 function parseService(value: unknown, name: string, secretKey: "apiKey" | "token"): never | null | { url: string; apiKey: string } {
   if (value === undefined || value === null) return null;
   if (typeof value !== "object") throw new ConfigError(`"${name}" must be an object with url and ${secretKey}.`);

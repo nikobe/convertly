@@ -6,6 +6,8 @@ import { replaceInPlace } from "./replace.ts";
 import { assess } from "./classify.ts";
 import type { Store, QueueRow } from "./db.ts";
 import type { Integrations } from "./integrations.ts";
+import type { Governors } from "./governors.ts";
+import type { Encode } from "./encoder.ts";
 import type { Root, Probe } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
 import type { Check } from "../shared/check.ts";
@@ -18,6 +20,7 @@ import type { JobStage } from "../shared/job.ts";
 export interface QueueDeps {
   store: Store;
   integrations: Integrations;
+  governors: Governors;
   roots: Root[];
   ffmpegPath: string;
   ffprobePath: string;
@@ -39,6 +42,10 @@ export class Queue {
   private live: { progress: Progress | null; stage: JobStage | null } = { progress: null, stage: null };
   private paused = false;
   private draining = false;
+  private encode: Encode | null = null;
+  private heldBy: string | null = null;
+  private holdReason: string | null = null;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: QueueDeps) {
     this.deps = deps;
@@ -55,8 +62,9 @@ export class Queue {
     const queued = items.filter((i) => i.state === "queued");
     return {
       items,
-      running: !this.paused,
-      holdReason: this.paused ? "Paused" : null,
+      running: !this.paused && this.heldBy === null,
+      holdReason: this.paused ? "Paused" : this.holdReason,
+      heldBy: this.paused ? "paused" : this.heldBy,
       totals: {
         queued: queued.length,
         sourceBytes: queued.reduce((n, i) => n + i.sourceBytes, 0),
@@ -203,8 +211,14 @@ export class Queue {
     this.emit();
   }
 
+  /** Current governor state, for the UI. */
+  async governorStatus() {
+    return this.deps.governors.evaluate();
+  }
+
   resume(): void {
     this.paused = false;
+    this.encode?.resume();
     this.emit();
     void this.drain();
   }
@@ -276,7 +290,13 @@ export class Queue {
 
   // ── the worker ───────────────────────────────────────────────────────
 
-  /** Start work if there is any and nothing is already running. */
+  /**
+   * Start work if there is any, nothing is running, and every governor agrees.
+   *
+   * When a governor says no the loop stops rather than spinning: a timer
+   * re-checks, so an overnight window or a cooling-off period costs nothing
+   * while it waits.
+   */
   async drain(): Promise<void> {
     if (this.draining || this.paused || this.runningId) return;
     this.draining = true;
@@ -284,12 +304,81 @@ export class Queue {
       for (;;) {
         if (this.paused) break;
         const row = this.deps.store.nextQueued();
-        if (!row) break;
+        if (!row) {
+          this.setHold(null, null);
+          break;
+        }
+
+        const status = await this.deps.governors.evaluate({ path: row.path, sourceBytes: row.source_bytes });
+        if (!status.verdict.allowed) {
+          this.setHold(status.verdict.governor, status.verdict.reason);
+          this.scheduleRecheck();
+          break;
+        }
+        this.setHold(null, null);
         await this.runOne(row);
       }
     } finally {
       this.draining = false;
     }
+  }
+
+  private setHold(governor: string | null, reason: string | null): void {
+    if (this.heldBy === governor && this.holdReason === reason) return;
+    this.heldBy = governor;
+    this.holdReason = reason;
+    this.emit();
+  }
+
+  /** Poll while held, so the queue restarts itself without anyone clicking. */
+  private scheduleRecheck(): void {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => {
+      this.deps.governors.tick(false);
+      if (this.paused || this.runningId) return;
+      if (!this.deps.store.nextQueued()) {
+        this.stopRecheck();
+        this.setHold(null, null);
+        return;
+      }
+      void this.drain().then(() => {
+        if (this.heldBy === null) this.stopRecheck();
+      });
+    }, 30_000);
+    // Never keep the process alive just to poll.
+    this.watchdog.unref?.();
+  }
+
+  private stopRecheck(): void {
+    if (!this.watchdog) return;
+    clearInterval(this.watchdog);
+    this.watchdog = null;
+  }
+
+  /**
+   * While a job runs, keep asking. A governor that turns hostile mid-encode
+   * suspends the process rather than killing it — SIGSTOP costs nothing and
+   * loses no work, which is what makes checking every few seconds reasonable.
+   */
+  private startSupervising(): ReturnType<typeof setInterval> {
+    let suspended = false;
+    const timer = setInterval(() => {
+      void (async () => {
+        if (!this.encode) return;
+        this.deps.governors.tick(!suspended);
+        const status = await this.deps.governors.evaluate();
+        if (!status.verdict.allowed && !suspended) {
+          suspended = this.encode.pause();
+          if (suspended) this.setHold(status.verdict.governor, `${status.verdict.reason} — encode suspended`);
+        } else if (status.verdict.allowed && suspended) {
+          this.encode.resume();
+          suspended = false;
+          this.setHold(null, null);
+        }
+      })();
+    }, 15_000);
+    timer.unref?.();
+    return timer;
   }
 
   private async runOne(row: QueueRow): Promise<void> {
@@ -304,6 +393,7 @@ export class Queue {
       const selection = JSON.parse(row.selection_json) as Selection;
       const preset = JSON.parse(row.preset_json) as Preset;
 
+      const supervisor = this.startSupervising();
       const result = await runJob({
         probe,
         selection,
@@ -321,7 +411,10 @@ export class Queue {
           this.live = { ...this.live, stage };
           this.emit();
         },
+        onEncodeStart: (encode) => { this.encode = encode; },
       });
+      clearInterval(supervisor);
+      this.encode = null;
 
       const state: QueueState =
         result.outcome === "replaced" ? "done"
@@ -362,6 +455,7 @@ export class Queue {
     } finally {
       this.runningId = null;
       this.controller = null;
+      this.encode = null;
       this.live = { progress: null, stage: null };
       this.emit();
     }

@@ -43,6 +43,8 @@ export interface QueueSnapshot {
   running: boolean;
   /** Why the worker is not starting anything, when it is not. */
   holdReason: string | null;
+  /** Which governor is holding it, for styling and for the header. */
+  heldBy: string | null;
   totals: {
     queued: number;
     sourceBytes: number;

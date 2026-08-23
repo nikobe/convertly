@@ -41,6 +41,8 @@ export interface JobOptions {
   onProgress?: (progress: Progress) => void;
   /** Verification is a large slice of total time; report it or it looks stalled. */
   onStage?: (stage: VerifyStage) => void;
+  /** Handed the live encoder so a governor can suspend and resume it. */
+  onEncodeStart?: (encode: Encode) => void;
   signal?: AbortSignal;
   /** Stop before touching the original. Used to prove a pipeline safely. */
   dryRun?: boolean;
@@ -54,7 +56,7 @@ export interface JobOptions {
  * later costs nothing.
  */
 export async function runJob(options: JobOptions): Promise<JobResult> {
-  const { probe, selection, preset, roots, ffmpegPath, ffprobePath, ffmpegVersion, onProgress, onStage, signal, dryRun } = options;
+  const { probe, selection, preset, roots, ffmpegPath, ffprobePath, ffmpegVersion, onProgress, onStage, onEncodeStart, signal, dryRun } = options;
 
   const tempDir = join(dirname(probe.path), TEMP_DIRNAME);
   const tempPath = join(tempDir, `${basename(probe.path, ".mkv")}.${Date.now()}.mkv`);
@@ -83,6 +85,7 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
 
   // ── encode ───────────────────────────────────────────────────────────
   const encode = new Encode();
+  onEncodeStart?.(encode);
   const result = await encode.run({
     ffmpegPath,
     args: built.args,

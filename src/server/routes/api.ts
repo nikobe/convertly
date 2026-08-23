@@ -8,6 +8,7 @@ import type { Binary } from "../binaries.ts";
 import { resolveWithinRoots, PathNotAllowedError } from "../paths.ts";
 import type { Queue } from "../queue.ts";
 import type { Integrations } from "../integrations.ts";
+import type { Governors } from "../governors.ts";
 import { DEFAULT_PRESET, type Preset } from "../../shared/preset.ts";
 import type { Selection } from "../../shared/estimate.ts";
 import type { HealthReport } from "../../shared/types.ts";
@@ -21,10 +22,11 @@ export interface Deps {
   ffmpeg: Binary | null;
   queue: Queue;
   integrations: Integrations;
+  governors: Governors;
 }
 
 export async function registerApi(app: FastifyInstance, deps: Deps): Promise<void> {
-  const { config, store, scanner, ffprobe, ffmpeg, queue, integrations } = deps;
+  const { config, store, scanner, ffprobe, ffmpeg, queue, integrations, governors } = deps;
 
   app.get("/api/health", async (): Promise<HealthReport> => {
     const checks: HealthReport["checks"] = [
@@ -152,6 +154,16 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
   // ── queue ────────────────────────────────────────────────────────────
 
   app.get("/api/queue", async () => queue.snapshot());
+
+  app.get("/api/governors", async () => {
+    const status = await governors.evaluate();
+    return {
+      config: governors.current,
+      verdict: status.verdict,
+      thermal: status.thermal,
+      playback: status.playback,
+    };
+  });
 
   app.post("/api/queue", async (request, reply) => {
     if (!ffmpeg) return reply.code(503).send({ error: "No ffmpeg available — nothing can be encoded." });
