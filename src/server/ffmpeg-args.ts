@@ -1,7 +1,8 @@
 import type { Probe, AudioTrack } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
 import {
-  HARDWARE_MIN_HEIGHT, primaryAudio, planFor, shouldReplaceAudio,
+  HARDWARE_MIN_HEIGHT, MAX_CHANNELS, ac3BitrateFor, outputChannels,
+  primaryAudio, planFor, shouldReplaceAudio,
   type Selection,
 } from "../shared/estimate.ts";
 
@@ -122,9 +123,14 @@ export function buildCommand(input: BuildInput): BuiltCommand {
       args.push(`-c:a:${outputIndex}`, "copy");
       return;
     }
-    args.push(`-c:a:${outputIndex}`, "ac3", `-b:a:${outputIndex}`, String(preset.ac3Bitrate));
+    const channels = outputChannels(track.channels);
+    args.push(
+      `-c:a:${outputIndex}`, "ac3",
+      // Integers only — this ffmpeg build rejects SI suffixes.
+      `-b:a:${outputIndex}`, String(ac3BitrateFor(channels, preset.ac3Bitrate)),
+    );
 
-    if (track.channels > 6) {
+    if (track.channels > MAX_CHANNELS) {
       // AC3 tops out at 5.1. ffmpeg's default fold leaves dialogue sitting too
       // low against the surrounds, so weight the merge explicitly instead.
       args.push(
@@ -133,19 +139,21 @@ export function buildCommand(input: BuildInput): BuiltCommand {
       );
       notes.push(`Track ${track.index}: ${track.channels} channels downmixed to 5.1 with an explicit weighting.`);
     } else {
-      args.push(`-ac:a:${outputIndex}`, String(Math.min(track.channels, 6)));
+      // Never upmixed: a stereo source stays stereo.
+      args.push(`-ac:a:${outputIndex}`, String(channels));
     }
   });
 
   if (compatIndex >= 0 && primary) {
-    args.push(`-c:a:${compatIndex}`, "ac3", `-b:a:${compatIndex}`, String(preset.ac3Bitrate));
-    if (primary.channels > 6) {
+    const compatChannels = outputChannels(primary.channels);
+    args.push(`-c:a:${compatIndex}`, "ac3", `-b:a:${compatIndex}`, String(ac3BitrateFor(compatChannels, preset.ac3Bitrate)));
+    if (primary.channels > MAX_CHANNELS) {
       args.push(
         `-filter:a:${compatIndex}`,
         "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|SL=0.707*SL+0.707*BL|SR=0.707*SR+0.707*BR",
       );
     } else {
-      args.push(`-ac:a:${compatIndex}`, String(Math.min(primary.channels, 6)));
+      args.push(`-ac:a:${compatIndex}`, String(compatChannels));
     }
     args.push(`-metadata:s:a:${compatIndex}`, "title=AC3 5.1 (compatibility)");
     if (primary.language) args.push(`-metadata:s:a:${compatIndex}`, `language=${primary.language}`);

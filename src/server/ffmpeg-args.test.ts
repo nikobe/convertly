@@ -201,3 +201,46 @@ test("a non-Atmos file still replaces, which is the bigger saving", () => {
   const maps = args.reduce<string[]>((acc, a, i) => (a === "-map" ? [...acc, args[i + 1]!] : acc), []);
   assert.equal(maps.filter((m) => m === "0:1").length, 1, "the source track is mapped once under replace");
 });
+
+test("7.1 is downmixed to 5.1 even when the codec is fine", () => {
+  // Two channels this chain cannot use, and the default fold buries dialogue.
+  const p = probe({ audio: [audio({ codec: "eac3", channels: 8, channelLayout: "7.1", bitrate: 1_500_000 })] });
+  const { args } = build(p);
+  assert.equal(arg(args, "-c:a:0"), "ac3");
+  assert.equal(arg(args, "-b:a:0"), "640000");
+  assert.match(arg(args, "-filter:a:0") ?? "", /^pan=5\.1\|/);
+});
+
+test("7.1 Atmos is still left alone — objects beat channel count", () => {
+  const p = probe({ audio: [audio({ codec: "eac3", channels: 8, hasAtmos: true })] });
+  assert.equal(arg(build(p).args, "-c:a:0"), "copy");
+});
+
+test("stereo is never upmixed and never gets a 5.1 bitrate", () => {
+  const p = probe({ audio: [audio({ codec: "dts", channels: 2, channelLayout: "stereo", bitrate: 768_000 })] });
+  const { args } = build(p);
+  assert.equal(arg(args, "-c:a:0"), "ac3", "DTS is replaced whatever its width");
+  assert.equal(arg(args, "-ac:a:0"), "2", "must not upmix to 5.1");
+  assert.equal(arg(args, "-b:a:0"), "224000", "640k on two channels is mostly wasted");
+  assert.equal(args.includes("-filter:a:0"), false, "no downmix filter on a stereo source");
+});
+
+test("compatible stereo is copied untouched", () => {
+  const p = probe({ audio: [audio({ codec: "ac3", channels: 2, bitrate: 192_000 })] });
+  assert.equal(arg(build(p).args, "-c:a:0"), "copy");
+});
+
+test("mono stays mono", () => {
+  const p = probe({ audio: [audio({ codec: "dts", channels: 1, channelLayout: "mono", bitrate: 300_000 })] });
+  const { args } = build(p);
+  assert.equal(arg(args, "-ac:a:0"), "1");
+  assert.equal(arg(args, "-b:a:0"), "128000");
+});
+
+test("every AC3 bitrate emitted is a plain integer", () => {
+  for (const channels of [1, 2, 6, 8]) {
+    const p = probe({ audio: [audio({ codec: "dts", channels })] });
+    const bitrate = build(p).args[build(p).args.indexOf("-b:a:0") + 1]!;
+    assert.match(bitrate, /^\d+$/, `channels=${channels} produced ${bitrate}`);
+  }
+});

@@ -31,8 +31,29 @@ export const AUDIO_REPLACE = new Set([
   "pcm_s16le", "pcm_s24le", "pcm_bluray", "pcm_dvd", "mlp",
 ]);
 
-/** The Dolby Digital ceiling, and what a replaced track is encoded at. */
+/** The Dolby Digital ceiling, for a full 5.1 track. */
 export const AC3_BITRATE = 640_000;
+
+/** Channels beyond this are downmixed: the playback chain here is 5.1. */
+export const MAX_CHANNELS = 6;
+
+/**
+ * AC3 bitrate for a given channel count.
+ *
+ * 640k is the 5.1 figure; spending it on a stereo track wastes most of it.
+ * Nothing is ever upmixed, so a 2.0 source stays 2.0.
+ */
+export function ac3BitrateFor(channels: number, ceiling = AC3_BITRATE): number {
+  if (channels >= 6) return ceiling;
+  if (channels >= 3) return Math.min(448_000, ceiling);
+  if (channels === 2) return Math.min(224_000, ceiling);
+  return Math.min(128_000, ceiling);
+}
+
+/** Output channel count: capped at 5.1, never increased. */
+export function outputChannels(channels: number): number {
+  return Math.min(Math.max(channels, 1), MAX_CHANNELS);
+}
 
 /** Hardware encoding takes over at 4K, where software x265 is not viable. */
 export const HARDWARE_MIN_HEIGHT = 1440;
@@ -77,14 +98,23 @@ export function bitsPerPixel(bitrate: number | null, width: number, height: numb
  * 5.1 is usually itself a dub), then channels, then the default flag.
  */
 /**
- * Whether this track gets re-encoded to AC3.
+ * Whether this track gets re-encoded to AC3 5.1.
  *
- * Atmos is never replaced whatever the codec — the objects cannot be
- * recovered, and they play back fine here. TrueHD without Atmos is fair game.
+ * Three reasons to touch a track, and Atmos overrides all of them because the
+ * objects cannot be recovered and this chain plays them fine:
+ *
+ *  - the codec misbehaves downstream (the DTS family)
+ *  - it is lossless, and therefore simply enormous
+ *  - it carries more than 5.1, which is channels this chain cannot use and
+ *    where the default fold buries dialogue
+ *
+ * A stereo track that is none of those is left exactly as it is. Nothing is
+ * ever upmixed.
  */
 export function shouldReplaceAudio(track: AudioTrack): boolean {
   if (track.hasAtmos) return false;
-  return AUDIO_REPLACE.has(track.codec.toLowerCase());
+  if (AUDIO_REPLACE.has(track.codec.toLowerCase())) return true;
+  return track.channels > MAX_CHANNELS;
 }
 
 export function primaryAudio(tracks: AudioTrack[]): AudioTrack | null {
@@ -190,10 +220,10 @@ export function estimateBytes(probe: Probe, plan: Plan, selection: Selection): n
     if (isPrimary && plan.audioPolicy === "add") {
       // Both survive: the original untouched, plus a new AC3 track.
       audioBitrate += (track.bitrate ?? 640_000) + AC3_BITRATE;
-    } else if (isPrimary) {
-      audioBitrate += shouldReplaceAudio(track) ? AC3_BITRATE : track.bitrate ?? AC3_BITRATE;
+    } else if (shouldReplaceAudio(track)) {
+      audioBitrate += ac3BitrateFor(outputChannels(track.channels));
     } else {
-      audioBitrate += track.bitrate ?? 128_000;
+      audioBitrate += track.bitrate ?? (isPrimary ? AC3_BITRATE : 128_000);
     }
   }
 

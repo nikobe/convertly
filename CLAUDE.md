@@ -5,26 +5,31 @@ Mac mini and re-encoding files smaller at the same picture quality.
 
 ## Locked decisions — do not relitigate these without asking
 
-**Audio: AC3 640k 5.1, replacing the original track.** The target chain is plain
-Dolby Digital playback clients — no DD+/EAC3 — so 640k is the ceiling and the
-universally compatible choice. A 7.1 source needs an explicit, correctly
-weighted 7.1→5.1 downmix, not ffmpeg's default fold, which leaves dialogue
-sitting too low against the surrounds.
+**What this app is for: smaller files from a newer video codec, at the same
+picture quality.** Audio is secondary — it is fixed only where it actually
+causes trouble, and never at the cost of making the file bigger.
 
-**Replace only what actually misbehaves.** `shouldReplaceAudio` is the single
-rule: a track is re-encoded if it is in `AUDIO_REPLACE` *and* carries no
-Atmos. DTS is the family that causes trouble downstream, and lossless formats
-are simply enormous. Dolby Digital Plus and Atmos are left alone — the
-playback chain here (the playback client) decodes and downmixes them without
-complaint, so an added AC3 track would cost ~576 MB on a two-hour film for no
-benefit. TrueHD *without* Atmos is still replaced; it is just large.
+**Audio: `shouldReplaceAudio` is the whole rule.** A track is re-encoded to
+AC3 if, and only if, it carries no Atmos *and* one of these holds:
 
-Video and audio are independent decisions. An H264 file with untouchable
-audio is still worth converting, and letting an audio constraint veto the
-video encode was a bug, not a policy.
+- the codec misbehaves downstream — the DTS family
+- it is lossless, and therefore enormous — TrueHD, PCM, FLAC
+- it is wider than 5.1, which is channels this chain cannot use
 
-**Dolby Vision is still excluded outright** — its metadata does not survive
-this pipeline reliably. That is the only remaining hard block.
+Consequences worth stating plainly, because each was got wrong once:
+
+- **Atmos is copied untouched and nothing is added beside it.** The playback client
+  decodes and downmixes it without complaint, and an added AC3 track costs
+  ~576 MB on a two-hour film to solve a problem that does not exist here.
+  Atmos beats every other reason to touch a track, including 7.1.
+- **Stereo is left alone, and never upmixed.** `outputChannels` caps but never
+  raises. A stereo track that does need re-encoding (stereo DTS) gets 224k,
+  not the 640k that belongs to 5.1 — see `ac3BitrateFor`.
+- **7.1 gets an explicit, correctly weighted 7.1→5.1 downmix**, not ffmpeg's
+  default fold, which leaves dialogue sitting too low against the surrounds.
+- **Video and audio are independent.** An H264 file whose audio must be left
+  alone is still worth converting. Letting an audio constraint veto the video
+  encode was a bug, not a policy.
 
 **Video: split on resolution.** 1080p and below uses `libx265` (CRF 20,
 preset medium, 10-bit). 2160p uses `hevc_videotoolbox` (10-bit). This is a
