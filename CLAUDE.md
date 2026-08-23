@@ -1,7 +1,7 @@
 # Convertly
 
-A local web console for browsing Plex/Jellyfin media across three drives on a
-Mac mini and re-encoding files smaller at the same picture quality.
+A local web console for browsing a Plex/Jellyfin library across several
+drives and re-encoding files smaller at the same picture quality.
 
 ## Locked decisions — do not relitigate these without asking
 
@@ -18,10 +18,10 @@ AC3 if, and only if, it carries no Atmos *and* one of these holds:
 
 Consequences worth stating plainly, because each was got wrong once:
 
-- **Atmos is copied untouched and nothing is added beside it.** The playback client
-  decodes and downmixes it without complaint, and an added AC3 track costs
-  ~576 MB on a two-hour film to solve a problem that does not exist here.
-  Atmos beats every other reason to touch a track, including 7.1.
+- **Atmos is copied untouched and nothing is added beside it.** The playback
+  client decodes and downmixes it without complaint, and an added AC3 track
+  costs ~576 MB on a two-hour film to solve a problem that does not exist
+  here. Atmos beats every other reason to touch a track, including 7.1.
 - **Stereo is left alone, and never upmixed.** `outputChannels` caps but never
   raises. A stereo track that does need re-encoding (stereo DTS) gets 224k,
   not the 640k that belongs to 5.1 — see `ac3BitrateFor`.
@@ -80,10 +80,11 @@ longer exists.
 `{MediaInfo VideoCodec}` will rewrite the file to say `h265` and re-score it);
 unmonitor items "to be safe"; or delete an original before quarantine expires.
 
-## Host (production target)
+## Reference host
 
-Intel Mac mini 2018, Intel Core i5-8500B 6C/6T, UHD 630 Quick Sync
-Gen 9.5, 8 GB RAM, macOS 15.7.7, Jellyfin running on the same box.
+Every encoder decision below is tuned for one deployment target: an Intel
+Mac mini 2018, Core i5-8500B 6C/6T, UHD 630 Quick Sync Gen 9.5, 8 GB RAM,
+macOS 15. On different hardware, re-measure before trusting any of it.
 
 Measured throughput, 10-second bursts on a cold machine:
 
@@ -98,23 +99,24 @@ Measured throughput, 10-second bursts on a cold machine:
 software at 1080p, which is why software wins there; at 4K, software x265 is
 ~0.2× realtime and hardware is the only viable option.
 
-**Sustained multi-hour encoding will thermally throttle in that enclosure.**
+**Sustained multi-hour encoding will thermally throttle in a small enclosure.**
 Derive ETAs from rolling measured throughput on the running job, never from
 the table above.
 
 **The table also flatters itself: it was measured on synthetic sources.** Real
 grainy material is materially harder. A 1920×960 WEBDL episode encoded at
-`libx265 medium crf20` on an M1 ran at 0.56× realtime — and the M1 is the
-faster machine. Treat ~0.6× sustained on the target host as an optimistic ceiling for
-real content, which is another reason ETAs must come from the running job.
+`libx265 medium crf20` on an Apple M1 ran at 0.56× realtime — on the faster of
+the two machines. Treat ~0.6× sustained as an optimistic ceiling for real
+content, which is another reason ETAs must come from the running job.
 
 ### Host gotchas
 
 - **This ffmpeg build rejects `-b:v 5M`.** Emit integers: `-b:v 5000000`.
-- **8 GB shared with Jellyfin.** 4K jobs are memory-tight. No generous buffers.
-- **Pin our own ffmpeg.** The only one on the box is Jellyfin's bundled copy at
-  `/Applications/Jellyfin.app/Contents/MacOS/ffmpeg`, which a Jellyfin update
-  can replace or remove. Record the version alongside every job.
+- **8 GB shared with a media server.** 4K jobs are memory-tight. No generous
+  buffers.
+- **Pin our own ffmpeg.** Do not depend on a media server's bundled copy — for
+  example `/Applications/Jellyfin.app/Contents/MacOS/ffmpeg` — since an update
+  can replace or remove it. Record the version alongside every job.
 - **No 4:2:2, 4:4:4, lossless or alpha** on the hardware HEVC path.
 
 ## Architecture
@@ -146,15 +148,16 @@ filesystem without going through it.
 
 ## Audio and subtitle track selection
 
-Real releases carry a pile of foreign dubs: one test file had eight foreign-language
-5.1 tracks plus an English stereo "Original Mono Mix", where the dubs alone
-were 1.8 GB of a 5.3 GB file — more than the video re-encode saves. Dropping
-them takes that file from 5.3 GB to 1.9 GB.
+Real releases carry a pile of foreign-language dubs: one test file had eight
+5.1 dub tracks plus an English stereo original, where the dubs alone were
+1.8 GB of a 5.3 GB file — more than the video re-encode saves. Dropping them
+took that file from 5.3 GB to 1.9 GB.
 
 So `primaryAudio` in `src/shared/estimate.ts` does not pick on channel count.
 Precedence is explicit preferred language, then untagged, then channels, then
 the default flag — on a foreign release the untagged 5.1 is usually itself a
-dub, so an explicit `eng` tag has to beat a wider untagged track.
+dub, so an explicit preferred-language tag has to beat a wider untagged
+track.
 
 The browse screen expands each file into a track chooser. It is projection
 only in phase 01; phase 02 must honour the recorded selection when building
@@ -204,7 +207,7 @@ outcome keeps the encode so accepting it later costs no re-encode.
   x265's default of 250 frames plus scene detection turned a source's steady
   2-second cadence into irregular gaps of up to 20 seconds. That makes Plex
   scrubbing coarse and, worse, stops Jellyfin's HLS segment boundaries landing
-  on keyframes, which turns a direct stream into a transcode on the target host.
+  on keyframes, which turns a direct stream into a transcode.
 - `encoder.ts` parses `-progress pipe:1`. **Progress is measured from `frame=`
   against duration × fps, never from `out_time`.** `out_time` is the muxer's
   furthest-written timestamp, and a stream-copied audio track is written far
@@ -233,7 +236,7 @@ Quarantine retention is 14 days.
 
 ## Design
 
-Single committed dark theme — an amber phosphor terminal, Sample Feature-adjacent, no
+Single committed dark theme — an amber phosphor terminal, science-fiction-terminal-adjacent, no
 light variant. Departure Mono throughout. Palette tokens live at the top of
 `src/web/styles.css`; the reference images that produced them are in
 `reference/`. Square corners, hairline rules, corner ticks — no rounded cards.

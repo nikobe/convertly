@@ -1,8 +1,8 @@
 # Convertly
 
-Browse the media on your Plex/Jellyfin drives, see what is worth re-encoding,
-and convert it smaller at the same picture quality — without Sonarr or Radarr
-ever deciding a file went missing.
+Browse a Plex/Jellyfin library, see what is worth re-encoding, and convert it
+smaller at the same picture quality — without Sonarr or Radarr ever deciding a
+file went missing.
 
 **Phase 01: read-only.** It probes and reports. It cannot alter a byte.
 

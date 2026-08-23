@@ -166,7 +166,7 @@ function audioChips(tracks: AudioTrack[]): Chip[] {
     if (seen.has(label)) continue;
     seen.add(label);
     if (AUDIO_REPLACE.has(codec)) {
-      chips.push({ label, tone: "warn", title: `${label} audio — your Dolby Digital chain will not direct-play this. Replaced with AC3 640k 5.1.` });
+      chips.push({ label, tone: "warn", title: `${label} audio — a plain Dolby Digital chain will not direct-play this. Replaced with AC3 640k 5.1.` });
     } else if (codec === "ac3" || codec === "eac3" || codec === "aac") {
       chips.push({ label, tone: "good", title: `${label} audio — direct-plays already.` });
     }

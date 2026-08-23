@@ -225,7 +225,7 @@ async function decodeSweep(
 /**
  * Mean VMAF over a few sampled windows rather than the whole film.
  *
- * A full-length comparison on the target host would cost as much as the encode. Three
+ * A full-length comparison would cost as much as the encode. Three
  * windows spread across the running time catch a bad encode without that.
  */
 async function sampleVmaf(
