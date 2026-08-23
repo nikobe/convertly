@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { statSync } from "node:fs";
 import { probeFile } from "./probe.ts";
@@ -21,6 +22,15 @@ export interface VerifyResult {
   vmaf: number | null;
 }
 
+/** Where verification has got to, so the UI never looks stalled. */
+export interface VerifyStage {
+  label: string;
+  step: number;
+  steps: number;
+  /** 0–1 within this step, when the step can report it. */
+  fraction: number | null;
+}
+
 export interface VerifyOptions {
   ffmpegPath: string;
   ffprobePath: string;
@@ -41,6 +51,7 @@ export interface VerifyOptions {
   vmafSampleSeconds?: number;
   /** Skip VMAF — for a stream-copy job, where there is nothing to measure. */
   skipVmaf?: boolean;
+  onStage?: (stage: VerifyStage) => void;
   signal?: AbortSignal;
 }
 
@@ -56,14 +67,19 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const {
     ffmpegPath, ffprobePath, source, outputPath, selection,
     expectedAudioStreams, expectedSubtitleStreams,
-    vmafFloor = 93, minShrinkRatio = 0.15, vmafSampleSeconds = 120, skipVmaf = false, signal,
+    vmafFloor = 93, minShrinkRatio = 0.15, vmafSampleSeconds = 120, skipVmaf = false, onStage, signal,
   } = options;
+
+  const STEPS = skipVmaf ? 5 : 6;
+  const stage = (step: number, label: string, fraction: number | null = null) =>
+    onStage?.({ label, step, steps: STEPS, fraction });
 
   const checks: Check[] = [];
   let outputProbe: Probe | null = null;
   let vmaf: number | null = null;
 
   // ── the output exists and is readable ────────────────────────────────
+  stage(1, "Reading the output");
   try {
     outputProbe = await probeFile(ffprobePath, outputPath);
     if (outputProbe.error) throw new Error(outputProbe.error);
@@ -74,6 +90,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
 
   // ── duration ─────────────────────────────────────────────────────────
+  stage(2, "Checking duration and tracks");
   if (source.durationSec && outputProbe.durationSec) {
     const drift = Math.abs(source.durationSec - outputProbe.durationSec);
     checks.push({
@@ -108,7 +125,10 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   });
 
   // ── a full decode, which catches corruption a probe will not ─────────
-  const sweep = await decodeSweep(ffmpegPath, outputPath, signal);
+  stage(3, "Decoding every frame", 0);
+  const sweep = await decodeSweep(ffmpegPath, outputPath, outputProbe.durationSec, signal, (fraction) =>
+    stage(3, "Decoding every frame", fraction),
+  );
   checks.push({
     id: "decode",
     label: "Decode sweep",
@@ -117,6 +137,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   });
 
   // ── size ─────────────────────────────────────────────────────────────
+  stage(4, "Comparing size");
   const outputSize = statSync(outputPath).size;
   const shrink = 1 - outputSize / source.size;
   checks.push({
@@ -131,7 +152,9 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     checks.push({ id: "vmaf", label: "VMAF", status: "skipped", detail: "Video stream was copied — nothing to compare." });
   } else {
     try {
-      vmaf = await sampleVmaf(ffmpegPath, source, outputPath, vmafSampleSeconds, signal);
+      vmaf = await sampleVmaf(ffmpegPath, source, outputPath, vmafSampleSeconds, signal, (done, total) =>
+        stage(5, `Measuring picture quality (window ${done} of ${total})`, done / total),
+      );
       checks.push({
         id: "vmaf",
         label: "VMAF",
@@ -143,25 +166,60 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     }
   }
 
+  stage(STEPS, "Done");
   const failed = checks.some((c) => c.status === "fail");
   const review = checks.some((c) => c.status === "review");
   return { ok: !failed && !review, needsReview: !failed && review, checks, outputProbe, vmaf };
 }
 
-/** Decode every frame and discard it, purely to surface errors. */
-async function decodeSweep(ffmpegPath: string, path: string, signal?: AbortSignal): Promise<{ ok: boolean; detail: string }> {
-  try {
-    const { stderr } = await run(
+/**
+ * Decode every frame and discard it, purely to surface errors.
+ *
+ * On a feature this is the longest step in verification, so it reports
+ * progress rather than leaving the UI looking stalled.
+ */
+async function decodeSweep(
+  ffmpegPath: string,
+  path: string,
+  durationSec: number | null,
+  signal?: AbortSignal,
+  onProgress?: (fraction: number) => void,
+): Promise<{ ok: boolean; detail: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(
       ffmpegPath,
-      ["-hide_banner", "-nostdin", "-v", "error", "-xerror", "-i", path, "-f", "null", "-"],
-      { maxBuffer: 4 * 1024 * 1024, signal },
+      ["-hide_banner", "-nostdin", "-v", "error", "-xerror", "-progress", "pipe:1", "-nostats", "-i", path, "-f", "null", "-"],
+      { stdio: ["ignore", "pipe", "pipe"] },
     );
-    const noise = stderr.trim();
-    return noise.length === 0 ? { ok: true, detail: "" } : { ok: false, detail: noise.split("\n")[0]!.slice(0, 200) };
-  } catch (err) {
-    const stderr = (err as { stderr?: string }).stderr ?? (err as Error).message;
-    return { ok: false, detail: stderr.split("\n")[0]!.slice(0, 200) };
-  }
+    const abort = () => child.kill("SIGKILL");
+    signal?.addEventListener("abort", abort, { once: true });
+
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      if (stderr.length > 32_000) stderr = stderr.slice(-32_000);
+    });
+
+    if (durationSec && onProgress) {
+      const lines = createInterface({ input: child.stdout });
+      lines.on("line", (line) => {
+        if (!line.startsWith("out_time_us=")) return;
+        const seconds = Number(line.slice("out_time_us=".length)) / 1e6;
+        if (Number.isFinite(seconds)) onProgress(Math.min(1, seconds / durationSec));
+      });
+    } else {
+      child.stdout.resume();
+    }
+
+    child.on("error", (err) => resolve({ ok: false, detail: err.message.slice(0, 200) }));
+    child.on("close", (code) => {
+      signal?.removeEventListener("abort", abort);
+      const noise = stderr.trim();
+      if (code === 0 && noise.length === 0) return resolve({ ok: true, detail: "" });
+      resolve({ ok: false, detail: (noise.split("\n")[0] ?? `exit code ${code}`).slice(0, 200) });
+    });
+  });
 }
 
 /**
@@ -176,6 +234,7 @@ async function sampleVmaf(
   outputPath: string,
   sampleSeconds: number,
   signal?: AbortSignal,
+  onWindow?: (done: number, total: number) => void,
 ): Promise<number | null> {
   const duration = source.durationSec;
   if (!duration || duration <= 0) return null;
@@ -187,7 +246,8 @@ async function sampleVmaf(
   const offsets = Array.from({ length: windows }, (_, i) => duration * 0.05 + (usable / windows) * i);
 
   const scores: number[] = [];
-  for (const offset of offsets) {
+  for (const [index, offset] of offsets.entries()) {
+    onWindow?.(index + 1, offsets.length);
     const score = await vmafWindow(ffmpegPath, source.path, outputPath, offset, window, signal);
     if (score !== null) scores.push(score);
   }

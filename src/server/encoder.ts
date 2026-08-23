@@ -83,8 +83,10 @@ export class Encode {
       const outTimeSec = Number(fields.get("out_time_us") ?? 0) / 1e6;
       const now = Date.now();
       samples.push({ at: now, outTime: outTimeSec });
-      // A trailing window, so a throttled machine is reflected within a minute.
-      while (samples.length > 2 && now - samples[0]!.at > 60_000) samples.shift();
+      // A trailing window: long enough to ride over x265's bursty out_time
+      // reporting, short enough to still reflect thermal throttling, which
+      // happens over minutes rather than seconds.
+      while (samples.length > 2 && now - samples[0]!.at > ETA_WINDOW_MS) samples.shift();
 
       onProgress?.({
         fraction: durationSec ? Math.min(1, outTimeSec / durationSec) : null,
@@ -137,6 +139,11 @@ export class Encode {
   }
 }
 
+/** Trailing window used to measure throughput. */
+export const ETA_WINDOW_MS = 120_000;
+/** Below this the window is too short to give an honest rate. */
+export const ETA_MIN_SPAN_MS = 20_000;
+
 export function parseSpeed(value: string | undefined): number {
   if (!value) return 0;
   const n = Number(value.replace(/x$/, ""));
@@ -153,6 +160,10 @@ export function estimateEta(
   const first = samples[0]!;
   const last = samples[samples.length - 1]!;
   const wallElapsed = (last.at - first.at) / 1000;
+  // x265 emits out_time in bursts, so a short window can catch a plateau and
+  // report a rate half the truth. Withhold the ETA until the window is wide
+  // enough to be worth trusting.
+  if (last.at - first.at < ETA_MIN_SPAN_MS) return null;
   const mediaEncoded = last.outTime - first.outTime;
   if (wallElapsed <= 0 || mediaEncoded <= 0) return null;
   const rate = mediaEncoded / wallElapsed;

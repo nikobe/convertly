@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { Job } from "../shared/job.ts";
 import { bytes } from "./format.ts";
 import { FileName } from "./FileName.tsx";
@@ -19,9 +20,21 @@ export function JobPanel({
   onCancel: () => void;
   onDismiss: () => void;
 }) {
-  const running = job.state === "encoding" || job.state === "verifying";
+  const encoding = job.state === "encoding";
+  const verifying = job.state === "verifying";
+  const running = encoding || verifying;
   const progress = job.progress;
   const pct = progress?.fraction === null || progress?.fraction === undefined ? null : progress.fraction * 100;
+  // ffmpeg stops advancing out_time while it finalises the mux, so the ETA
+  // legitimately goes unknown at the very end. Say so, rather than "measuring".
+  const nearlyDone = (progress?.fraction ?? 0) > 0.97;
+
+  // ffmpeg's reported position can sit still and then jump; it must never be
+  // seen to go backwards, which reads as a fault rather than as reporting.
+  const highWater = useRef(0);
+  if (!running) highWater.current = 0;
+  if (pct !== null && pct > highWater.current) highWater.current = pct;
+  const shown = pct === null ? null : Math.max(pct, highWater.current);
 
   return (
     <section className={`job job-${job.state}`} aria-live="polite">
@@ -33,17 +46,37 @@ export function JobPanel({
         {!running && <button className="jbtn quiet" onClick={onDismiss}>Dismiss</button>}
       </div>
 
-      {running && (
+      {encoding && (
         <div className="jprogress">
           <div className="bar">
-            <i style={{ width: `${pct ?? 0}%` }} />
+            <i style={{ width: `${shown ?? 0}%` }} />
           </div>
           <div className="jstats">
-            <span>{pct === null ? "working" : `${pct.toFixed(1)}%`}</span>
+            <span>{shown === null ? "working" : `${shown.toFixed(1)}%`}</span>
             <span>{progress ? `${progress.fps.toFixed(0)} fps` : "—"}</span>
             <span>{progress ? `${progress.speed.toFixed(2)}× realtime` : "—"}</span>
             <span>{progress ? bytes(progress.outputBytes) : "—"} written</span>
-            <span className="eta">{progress?.etaSec != null ? `${clock(progress.etaSec)} left` : "measuring…"}</span>
+            <span className="eta">
+              {progress?.etaSec != null
+                ? `${clock(progress.etaSec)} left`
+                : nearlyDone
+                  ? "finishing the file"
+                  : "measuring throughput"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {verifying && job.stage && (
+        <div className="jprogress">
+          <div className="bar verify">
+            <i style={{ width: `${stagePercent(job.stage)}%` }} />
+          </div>
+          <div className="jstats">
+            <span>Check {job.stage.step} of {job.stage.steps}</span>
+            <span className="eta">{job.stage.label}</span>
+            {job.stage.fraction !== null && <span>{Math.round(job.stage.fraction * 100)}% of this check</span>}
+            <span className="jhint">Encoding is done — nothing is replaced until these pass.</span>
           </div>
         </div>
       )}
@@ -82,6 +115,12 @@ export function JobPanel({
       )}
     </section>
   );
+}
+
+/** Overall verification progress: whole steps plus the current step's own. */
+function stagePercent(stage: NonNullable<Job["stage"]>): number {
+  const each = 100 / stage.steps;
+  return Math.min(100, (stage.step - 1) * each + each * (stage.fraction ?? 0));
 }
 
 function stateLabel(state: Job["state"]): string {

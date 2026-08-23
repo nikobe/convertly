@@ -415,3 +415,7 @@ td.name button.expander .fname { flex: 1; }
 
 .qactions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
   padding-top: 0.6rem; border-top: 1px solid var(--rule); }
+
+.jprogress .bar.verify { border-color: var(--rule-hi); }
+.jprogress .bar.verify i { background: var(--ok); }
+.jstats .jhint { color: var(--text-faint); }

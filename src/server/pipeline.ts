@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, existsSync, statSync, readdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { buildCommand, BuildError } from "./ffmpeg-args.ts";
 import { Encode, type Progress } from "./encoder.ts";
-import { verify, type Check } from "./verify.ts";
+import { verify, type Check, type VerifyStage } from "./verify.ts";
 import { replaceInPlace, type ReplaceRecord } from "./replace.ts";
 import { probeFile } from "./probe.ts";
 import type { Probe, Root } from "../shared/types.ts";
@@ -39,6 +39,8 @@ export interface JobOptions {
   ffprobePath: string;
   ffmpegVersion: string;
   onProgress?: (progress: Progress) => void;
+  /** Verification is a large slice of total time; report it or it looks stalled. */
+  onStage?: (stage: VerifyStage) => void;
   signal?: AbortSignal;
   /** Stop before touching the original. Used to prove a pipeline safely. */
   dryRun?: boolean;
@@ -52,7 +54,7 @@ export interface JobOptions {
  * later costs nothing.
  */
 export async function runJob(options: JobOptions): Promise<JobResult> {
-  const { probe, selection, preset, roots, ffmpegPath, ffprobePath, ffmpegVersion, onProgress, signal, dryRun } = options;
+  const { probe, selection, preset, roots, ffmpegPath, ffprobePath, ffmpegVersion, onProgress, onStage, signal, dryRun } = options;
 
   const tempDir = join(dirname(probe.path), TEMP_DIRNAME);
   const tempPath = join(tempDir, `${basename(probe.path, ".mkv")}.${Date.now()}.mkv`);
@@ -115,6 +117,7 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     expectedAudioStreams: built.expectedAudioStreams,
     expectedSubtitleStreams: built.expectedSubtitleStreams,
     skipVmaf: built.encoder === "copy",
+    onStage,
     signal,
   });
 

@@ -18,6 +18,8 @@ export interface Job {
   name: string;
   state: JobState;
   progress: Progress | null;
+  /** Verification progress, once encoding is done. */
+  stage: { label: string; step: number; steps: number; fraction: number | null } | null;
   result: JobResult | null;
   startedAt: number;
   finishedAt: number | null;
@@ -121,6 +123,7 @@ export class JobRunner {
       name: probe.path.split("/").pop() ?? probe.path,
       state: "encoding",
       progress: null,
+      stage: null,
       result: null,
       startedAt: Date.now(),
       finishedAt: null,
@@ -158,11 +161,14 @@ export class JobRunner {
         dryRun: !input.replace,
         signal: controller.signal,
         onProgress: (progress) => this.update(id, { progress, state: "encoding", message: "Encoding" }),
+        onStage: (stage) =>
+          this.update(id, { state: "verifying", stage, message: `Verifying — ${stage.label.toLowerCase()}` }),
       });
 
       if (result.outcome === "replaced") this.remember(probe.path, result);
 
       this.update(id, {
+        stage: null,
         state: result.outcome === "replaced" ? "replaced" : result.outcome === "review" ? "review" : result.outcome,
         result,
         message: result.message,

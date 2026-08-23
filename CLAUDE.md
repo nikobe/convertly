@@ -196,12 +196,19 @@ outcome keeps the encode so accepting it later costs no re-encode.
   frame. It is also where the integer-bitrate rule lives, with a test that
   fails if any SI-suffixed number could ever reach ffmpeg.
 - `encoder.ts` parses `-progress pipe:1`. **ETA comes from throughput measured
-  over a trailing 60-second window**, never a static figure — the target host
+  over a trailing 120-second window**, never a static figure — the target host
   throttles, so a rate sampled in the first minute is a lie by hour three.
-  `pause()`/`resume()` are SIGSTOP/SIGCONT, so governors are cheap.
+  The window is 120s rather than 60s because x265 frame threading emits
+  `out_time` in bursts: the fraction plateaus for 20s or more while fps keeps
+  moving, and a 60s window caught those plateaus and swung the ETA from 77s to
+  130s. No ETA is published until 20s of samples exist. `pause()`/`resume()`
+  are SIGSTOP/SIGCONT, so governors are cheap.
 - `verify.ts` gates on readability, duration drift, track census, chapters, a
   full decode sweep, size delta and mean VMAF over three sampled windows.
-  `fail` aborts; `review` holds for a human.
+  `fail` aborts; `review` holds for a human. **It reports stages**, because on
+  a feature it is a large slice of total time and used to look like a hang:
+  the job sat in `encoding` with a frozen bar for the whole of it. The decode
+  sweep reports a real percentage; the VMAF windows are counted off.
 - `replace.ts` is the arr-safety boundary. Same-volume rename only — a
   cross-volume swap is refused rather than silently becoming a copy — then
   mtime and mode are restored. `sweepQuarantine` only ever looks inside a
