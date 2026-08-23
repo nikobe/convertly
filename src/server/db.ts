@@ -4,6 +4,26 @@ import { join } from "node:path";
 import type { Probe, Bookmark, Conversion } from "../shared/types.ts";
 import { DEFAULT_PRESET, type Preset } from "../shared/preset.ts";
 
+/** Row shape of the queue table. */
+export interface QueueRow {
+  id: string;
+  path: string;
+  name: string;
+  state: string;
+  position: number;
+  source_bytes: number;
+  estimated_bytes: number | null;
+  saved_bytes: number | null;
+  message: string;
+  selection_json: string;
+  preset_json: string;
+  checks_json: string;
+  pending_path: string | null;
+  added_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+}
+
 export class Store {
   private db: DatabaseSync;
 
@@ -45,6 +65,26 @@ export class Store {
         ffmpeg_version  TEXT NOT NULL,
         quarantine_path TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS queue (
+        id              TEXT PRIMARY KEY,
+        path            TEXT NOT NULL UNIQUE,
+        name            TEXT NOT NULL,
+        state           TEXT NOT NULL,
+        position        INTEGER NOT NULL,
+        source_bytes    INTEGER NOT NULL,
+        estimated_bytes INTEGER,
+        saved_bytes     INTEGER,
+        message         TEXT NOT NULL DEFAULT '',
+        selection_json  TEXT NOT NULL,
+        preset_json     TEXT NOT NULL,
+        checks_json     TEXT NOT NULL DEFAULT '[]',
+        pending_path    TEXT,
+        added_at        INTEGER NOT NULL,
+        started_at      INTEGER,
+        finished_at     INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS queue_state_position ON queue(state, position);
 
       CREATE TABLE IF NOT EXISTS presets (
         id         TEXT PRIMARY KEY,
@@ -192,6 +232,91 @@ export class Store {
 
   deletePreset(id: string): boolean {
     return this.db.prepare("DELETE FROM presets WHERE id = ?").run(id).changes > 0;
+  }
+
+  // ── queue ──────────────────────────────────────────────────────────
+
+  /**
+   * The queue lives in SQLite, not memory, so a crash or a power cut mid-batch
+   * resumes where it stopped instead of losing the night's work.
+   */
+  listQueue(): QueueRow[] {
+    return this.db
+      .prepare(`SELECT * FROM queue ORDER BY
+                  CASE state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+                  position, added_at`)
+      .all() as unknown as QueueRow[];
+  }
+
+  getQueueItem(id: string): QueueRow | null {
+    return (this.db.prepare("SELECT * FROM queue WHERE id = ?").get(id) as unknown as QueueRow | undefined) ?? null;
+  }
+
+  /** The next thing to run, or null when the queue is empty. */
+  nextQueued(): QueueRow | null {
+    return (this.db
+      .prepare("SELECT * FROM queue WHERE state = 'queued' ORDER BY position, added_at LIMIT 1")
+      .get() as unknown as QueueRow | undefined) ?? null;
+  }
+
+  /**
+   * Add a file. The unique path means queueing the same file twice is a
+   * no-op rather than two encodes racing for one output.
+   */
+  addToQueue(row: Omit<QueueRow, "position"> & { position?: number }): boolean {
+    const next = this.db.prepare("SELECT COALESCE(MAX(position), 0) + 1 AS n FROM queue").get() as { n: number };
+    const result = this.db
+      .prepare(
+        `INSERT INTO queue
+           (id, path, name, state, position, source_bytes, estimated_bytes, saved_bytes,
+            message, selection_json, preset_json, checks_json, pending_path, added_at, started_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(path) DO NOTHING`,
+      )
+      .run(
+        row.id, row.path, row.name, row.state, row.position ?? next.n, row.source_bytes,
+        row.estimated_bytes, row.saved_bytes, row.message, row.selection_json, row.preset_json,
+        row.checks_json, row.pending_path, row.added_at, row.started_at, row.finished_at,
+      );
+    return Number(result.changes) > 0;
+  }
+
+  updateQueueItem(id: string, patch: Partial<QueueRow>): void {
+    const keys = Object.keys(patch).filter((k) => k !== "id");
+    if (keys.length === 0) return;
+    const assignments = keys.map((k) => `${k} = ?`).join(", ");
+    const values = keys.map((k) => (patch as Record<string, unknown>)[k] as string | number | null);
+    this.db.prepare(`UPDATE queue SET ${assignments} WHERE id = ?`).run(...values, id);
+  }
+
+  removeQueueItem(id: string): boolean {
+    return Number(this.db.prepare("DELETE FROM queue WHERE id = ?").run(id).changes) > 0;
+  }
+
+  /** Clear finished entries, keeping anything still queued or running. */
+  clearFinishedQueue(): number {
+    return Number(
+      this.db.prepare("DELETE FROM queue WHERE state IN ('done', 'failed', 'cancelled')").run().changes,
+    );
+  }
+
+  reorderQueue(ids: string[]): void {
+    const statement = this.db.prepare("UPDATE queue SET position = ? WHERE id = ? AND state = 'queued'");
+    ids.forEach((id, index) => statement.run(index + 1, id));
+  }
+
+  /**
+   * Anything left "running" when the process died did not finish. Put it back
+   * in the queue rather than leaving a row that never resolves.
+   */
+  requeueInterrupted(): number {
+    return Number(
+      this.db
+        .prepare(`UPDATE queue SET state = 'queued', started_at = NULL,
+                  message = 'Requeued after the server restarted mid-encode.'
+                  WHERE state = 'running'`)
+        .run().changes,
+    );
   }
 
   listBookmarks(): Bookmark[] {

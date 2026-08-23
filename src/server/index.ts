@@ -8,7 +8,7 @@ import { Scanner } from "./scanner.ts";
 import { locate, type Binary } from "./binaries.ts";
 import { registerApi } from "./routes/api.ts";
 import { parseClientRules, isClientAllowed, isExposedHost, reachableUrls } from "./access.ts";
-import { JobRunner } from "./jobs.ts";
+import { Queue } from "./queue.ts";
 import { sweepTempDirs } from "./pipeline.ts";
 import { sweepQuarantine } from "./replace.ts";
 
@@ -43,12 +43,12 @@ async function main(): Promise<void> {
   const sweptTemp = sweepTempDirs(config.roots);
   const sweptQuarantine = sweepQuarantine(config.roots);
 
-  const jobs = new JobRunner({
+  const queue = new Queue({
+    store,
     roots: config.roots,
     ffmpegPath: ffmpeg?.path ?? "",
     ffprobePath: ffprobe.path,
     ffmpegVersion: ffmpeg?.version ?? "unknown",
-    store,
   });
 
   const app = Fastify({
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
     return reply.code(403).send({ error: "Not permitted from this address." });
   });
 
-  await registerApi(app, { config, store, scanner, ffprobe, ffmpeg, jobs });
+  await registerApi(app, { config, store, scanner, ffprobe, ffmpeg, queue });
 
   // Built UI, when it exists. In development Vite serves it on its own port
   // and proxies /api here, so this is absent and that is fine.
@@ -87,6 +87,8 @@ async function main(): Promise<void> {
   process.on("SIGTERM", close);
 
   await app.listen({ host: config.host, port: config.port });
+  // Anything left queued from last time starts as soon as we are listening.
+  void queue.drain();
   app.log.info(`ffprobe ${ffprobe.version} (${ffprobe.source})`);
   app.log.info(`roots: ${config.roots.map((r) => r.label).join(", ")}`);
   for (const url of reachableUrls(config.port)) app.log.info(`open ${url}`);

@@ -450,3 +450,64 @@ td.name button.expander .fname { flex: 1; }
 .jprogress .bar.verify { border-color: var(--rule-hi); }
 .jprogress .bar.verify i { background: var(--ok); }
 .jstats .jhint { color: var(--text-faint); }
+
+/* ── the queue ─────────────────────────────────────────── */
+
+.queue {
+  border-top: 1px solid var(--rule-hi);
+  background: var(--panel);
+  padding: 0.7rem 1rem 0.8rem;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  max-height: 45vh; overflow-y: auto;
+}
+.qpaused { margin: 0; color: var(--warn); font-size: 11px; }
+.qempty { margin: 0; color: var(--text-faint); font-size: 12px; }
+
+.qlist { display: flex; flex-direction: column; gap: 1px; }
+
+/* Flex with wrapping, not a fixed grid: a queue row has to sit on one line
+   when there is room and fold gracefully when there is not, and the column
+   count that suits a running item does not suit a finished one. */
+.qitem {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 0.25rem 0.6rem;
+  padding: 0.28rem 0.3rem; font-size: 12px;
+  border-bottom: 1px solid #2a2825;
+}
+.qitem:hover { background: var(--panel-2); }
+.qitem.running { background: #2b2620; }
+.qitem.done .qmsg, .qitem.cancelled .qmsg { color: var(--text-faint); }
+
+.qstate {
+  flex: none; width: 5.5rem; text-align: center;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  border: 1px solid var(--rule-hi); color: var(--text-dim);
+  padding: 0 0.3rem; white-space: nowrap;
+}
+.qstate.running { border-color: var(--amber); color: var(--amber); }
+.qstate.review  { border-color: var(--amber-hi); color: var(--amber-hi); }
+.qstate.done    { border-color: var(--ok); color: var(--ok); }
+.qstate.failed  { border-color: var(--crit); color: var(--crit); }
+
+.qname { flex: 1 1 14rem; min-width: 0; color: var(--text); }
+.qsize { flex: none; font-variant-numeric: tabular-nums; color: var(--text-dim); white-space: nowrap; }
+.qsaved { color: var(--ok); }
+.qest { color: var(--amber-dim); }
+.qbar { flex: 1 1 7rem; height: 10px; border: 1px solid var(--amber-dim); background: var(--ground); }
+.qbar i { display: block; height: 100%; background: var(--amber); transition: width .4s linear; }
+.qbar i.verify { background: var(--ok); }
+.qwhen { flex: none; color: var(--amber-hi); font-size: 11px; white-space: nowrap; }
+/* Takes its own line only when the row above has run out of room. */
+.qmsg {
+  flex: 1 1 16rem; min-width: 0; color: var(--text-dim); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qactions { flex: none; display: flex; gap: 0.3rem; margin-left: auto; }
+.qactions .jbtn { padding: 0.05rem 0.5rem; }
+
+.hud .queuebtn.live { border-color: var(--amber); color: var(--amber); }
+.hud .queuebtn.needs { border-color: var(--amber-hi); }
+.hud .needsyou {
+  color: var(--ground); background: var(--amber-hi);
+  padding: 0 0.3rem; margin-left: 0.1rem;
+}

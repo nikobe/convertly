@@ -1,0 +1,347 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, rmSync } from "node:fs";
+import { basename } from "node:path";
+import { runJob, freshProbe } from "./pipeline.ts";
+import { replaceInPlace } from "./replace.ts";
+import { assess } from "./classify.ts";
+import type { Store, QueueRow } from "./db.ts";
+import type { Root, Probe } from "../shared/types.ts";
+import type { Preset } from "../shared/preset.ts";
+import type { Check } from "../shared/check.ts";
+import { keepEverything, planFor, estimateBytes, type Selection } from "../shared/estimate.ts";
+import { formatBytes } from "../shared/format.ts";
+import type { QueueItem, QueueSnapshot, QueueState } from "../shared/queue.ts";
+import type { Progress } from "./encoder.ts";
+import type { JobStage } from "../shared/job.ts";
+
+export interface QueueDeps {
+  store: Store;
+  roots: Root[];
+  ffmpegPath: string;
+  ffprobePath: string;
+  ffmpegVersion: string;
+}
+
+/**
+ * Drains the queue one job at a time.
+ *
+ * Concurrency is fixed at one: measured on the target host, two parallel
+ * hardware encodes aggregate less throughput than a single one, and software
+ * x265 already saturates every core.
+ */
+export class Queue {
+  private deps: QueueDeps;
+  private listeners = new Set<(snapshot: QueueSnapshot) => void>();
+  private controller: AbortController | null = null;
+  private runningId: string | null = null;
+  private live: { progress: Progress | null; stage: JobStage | null } = { progress: null, stage: null };
+  private paused = false;
+  private draining = false;
+
+  constructor(deps: QueueDeps) {
+    this.deps = deps;
+    // A row still marked running means the process died mid-encode.
+    const requeued = this.deps.store.requeueInterrupted();
+    if (requeued > 0) this.emit();
+  }
+
+  // ── reading ──────────────────────────────────────────────────────────
+
+  snapshot(): QueueSnapshot {
+    const rows = this.deps.store.listQueue();
+    const items = rows.map((row) => this.toItem(row));
+    const queued = items.filter((i) => i.state === "queued");
+    return {
+      items,
+      running: !this.paused,
+      holdReason: this.paused ? "Paused" : null,
+      totals: {
+        queued: queued.length,
+        sourceBytes: queued.reduce((n, i) => n + i.sourceBytes, 0),
+        estimatedBytes: queued.reduce((n, i) => n + (i.estimatedBytes ?? 0), 0),
+        savedBytes: items.reduce((n, i) => n + (i.savedBytes ?? 0), 0),
+      },
+    };
+  }
+
+  private toItem(row: QueueRow): QueueItem {
+    const isRunning = row.id === this.runningId;
+    let checks: Check[] = [];
+    try {
+      checks = JSON.parse(row.checks_json) as Check[];
+    } catch {
+      checks = [];
+    }
+    return {
+      id: row.id,
+      path: row.path,
+      name: row.name,
+      state: row.state as QueueState,
+      position: row.position,
+      sourceBytes: row.source_bytes,
+      estimatedBytes: row.estimated_bytes,
+      savedBytes: row.saved_bytes,
+      message: row.message,
+      addedAt: row.added_at,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      checks,
+      progress: isRunning ? this.live.progress : null,
+      stage: isRunning ? this.live.stage : null,
+    };
+  }
+
+  subscribe(listener: (snapshot: QueueSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emit(): void {
+    const snapshot = this.snapshot();
+    for (const listener of this.listeners) listener(snapshot);
+  }
+
+  // ── writing ──────────────────────────────────────────────────────────
+
+  /**
+   * Queue a set of files. Returns what was added and what was not, rather
+   * than failing the whole batch because one file is already in the queue.
+   */
+  async add(
+    entries: { path: string; selection?: Selection }[],
+    preset: Preset,
+  ): Promise<{ added: number; skipped: { path: string; reason: string }[] }> {
+    const skipped: { path: string; reason: string }[] = [];
+    let added = 0;
+
+    for (const entry of entries) {
+      let probe: Probe;
+      try {
+        probe = await freshProbe(this.deps.ffprobePath, entry.path);
+      } catch (err) {
+        skipped.push({ path: entry.path, reason: (err as Error).message });
+        continue;
+      }
+
+      const assessment = assess(probe);
+      if (assessment.blockedReason) {
+        skipped.push({ path: entry.path, reason: assessment.blockedReason });
+        continue;
+      }
+
+      const selection = entry.selection ?? keepEverything(probe);
+      const trimsTracks =
+        selection.audio.length < probe.audio.length || selection.subtitles.length < probe.subtitles.length;
+      // Queueing a file with nothing to do burns an encode to produce a copy
+      // that then fails the size gate. Say so at the point of adding instead.
+      if (!assessment.videoWork && !assessment.audioWork && !trimsTracks) {
+        skipped.push({ path: entry.path, reason: "Nothing to convert — efficient video, compatible audio, no tracks dropped." });
+        continue;
+      }
+
+      const estimated = estimateBytes(probe, planFor(probe), selection, {
+        crf: preset.crf,
+        maxHeight: preset.maxHeight,
+      });
+
+      const ok = this.deps.store.addToQueue({
+        id: randomUUID(),
+        path: probe.path,
+        name: basename(probe.path),
+        state: "queued",
+        source_bytes: probe.size,
+        estimated_bytes: estimated,
+        saved_bytes: null,
+        message: "Waiting",
+        selection_json: JSON.stringify(selection),
+        preset_json: JSON.stringify(preset),
+        checks_json: "[]",
+        pending_path: null,
+        added_at: Date.now(),
+        started_at: null,
+        finished_at: null,
+      });
+
+      if (ok) added++;
+      else skipped.push({ path: entry.path, reason: "Already in the queue." });
+    }
+
+    this.emit();
+    void this.drain();
+    return { added, skipped };
+  }
+
+  remove(id: string): boolean {
+    const row = this.deps.store.getQueueItem(id);
+    if (!row) return false;
+    if (row.state === "running") {
+      this.cancelRunning();
+      return true;
+    }
+    // A held encode still on disk should not be orphaned by removing the row.
+    if (row.pending_path && existsSync(row.pending_path)) rmSync(row.pending_path, { force: true });
+    const removed = this.deps.store.removeQueueItem(id);
+    this.emit();
+    return removed;
+  }
+
+  reorder(ids: string[]): void {
+    this.deps.store.reorderQueue(ids);
+    this.emit();
+  }
+
+  clearFinished(): number {
+    const n = this.deps.store.clearFinishedQueue();
+    this.emit();
+    return n;
+  }
+
+  pause(): void {
+    this.paused = true;
+    this.emit();
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.emit();
+    void this.drain();
+  }
+
+  cancelRunning(): void {
+    this.controller?.abort();
+  }
+
+  /** Accept a held encode: swap it in without re-encoding. */
+  accept(id: string): void {
+    const row = this.deps.store.getQueueItem(id);
+    if (!row) throw new Error("No such item.");
+    if (row.state !== "review" || !row.pending_path) throw new Error("Nothing waiting to be accepted.");
+    if (!existsSync(row.pending_path)) throw new Error("The encoded file has gone — run it again.");
+
+    const record = replaceInPlace(row.path, row.pending_path, this.deps.roots);
+    const saved = record.originalSize - record.newSize;
+    this.deps.store.recordConversion({
+      path: row.path,
+      convertedAt: record.replacedAt,
+      originalSize: record.originalSize,
+      newSize: record.newSize,
+      encoder: "accepted",
+      vmaf: null,
+      ffmpegVersion: this.deps.ffmpegVersion,
+      quarantinePath: record.quarantinePath,
+    });
+    this.deps.store.updateQueueItem(id, {
+      state: "done",
+      saved_bytes: saved,
+      pending_path: null,
+      message: `Replaced after review, ${formatBytes(saved)} saved.`,
+      finished_at: Date.now(),
+    });
+    this.emit();
+  }
+
+  /** Throw a held encode away and keep the original. */
+  discard(id: string): void {
+    const row = this.deps.store.getQueueItem(id);
+    if (!row) throw new Error("No such item.");
+    if (row.pending_path && existsSync(row.pending_path)) rmSync(row.pending_path, { force: true });
+    this.deps.store.updateQueueItem(id, {
+      state: "cancelled",
+      pending_path: null,
+      message: "Encode discarded. The original is untouched.",
+      finished_at: Date.now(),
+    });
+    this.emit();
+  }
+
+  // ── the worker ───────────────────────────────────────────────────────
+
+  /** Start work if there is any and nothing is already running. */
+  async drain(): Promise<void> {
+    if (this.draining || this.paused || this.runningId) return;
+    this.draining = true;
+    try {
+      for (;;) {
+        if (this.paused) break;
+        const row = this.deps.store.nextQueued();
+        if (!row) break;
+        await this.runOne(row);
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  private async runOne(row: QueueRow): Promise<void> {
+    this.runningId = row.id;
+    this.controller = new AbortController();
+    this.live = { progress: null, stage: null };
+    this.deps.store.updateQueueItem(row.id, { state: "running", started_at: Date.now(), message: "Starting" });
+    this.emit();
+
+    try {
+      const probe = await freshProbe(this.deps.ffprobePath, row.path);
+      const selection = JSON.parse(row.selection_json) as Selection;
+      const preset = JSON.parse(row.preset_json) as Preset;
+
+      const result = await runJob({
+        probe,
+        selection,
+        preset,
+        roots: this.deps.roots,
+        ffmpegPath: this.deps.ffmpegPath,
+        ffprobePath: this.deps.ffprobePath,
+        ffmpegVersion: this.deps.ffmpegVersion,
+        signal: this.controller.signal,
+        onProgress: (progress) => {
+          this.live = { progress, stage: null };
+          this.emit();
+        },
+        onStage: (stage) => {
+          this.live = { ...this.live, stage };
+          this.emit();
+        },
+      });
+
+      const state: QueueState =
+        result.outcome === "replaced" ? "done"
+        : result.outcome === "review" ? "review"
+        : result.outcome === "cancelled" ? "cancelled"
+        : "failed";
+
+      const saved = result.record ? result.record.originalSize - result.record.newSize : null;
+      if (result.record) {
+        this.deps.store.recordConversion({
+          path: probe.path,
+          convertedAt: result.record.replacedAt,
+          originalSize: result.record.originalSize,
+          newSize: result.record.newSize,
+          encoder: result.encoder,
+          vmaf: result.vmaf,
+          ffmpegVersion: result.ffmpegVersion,
+          quarantinePath: result.record.quarantinePath,
+        });
+      }
+
+      this.deps.store.updateQueueItem(row.id, {
+        state,
+        message: result.message,
+        checks_json: JSON.stringify(result.checks),
+        pending_path: result.pendingPath,
+        saved_bytes: saved,
+        finished_at: Date.now(),
+      });
+    } catch (err) {
+      this.deps.store.updateQueueItem(row.id, {
+        state: "failed",
+        message: `${(err as Error).message} — the original was not touched.`,
+        finished_at: Date.now(),
+      });
+    } finally {
+      this.runningId = null;
+      this.controller = null;
+      this.live = { progress: null, stage: null };
+      this.emit();
+    }
+  }
+}

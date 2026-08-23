@@ -3,11 +3,11 @@ import type { BrowseResponse, Bookmark, HealthReport, Root, DirEntry } from "../
 import { api } from "./api.ts";
 import { bytes, duration } from "./format.ts";
 import { TrackPanel } from "./TrackPanel.tsx";
-import { JobPanel } from "./JobPanel.tsx";
+import { QueuePanel } from "./QueuePanel.tsx";
 import { FileName } from "./FileName.tsx";
 import { QualityPanel } from "./QualityPanel.tsx";
 import { DEFAULT_PRESET, type Preset } from "../shared/preset.ts";
-import type { Job } from "../shared/job.ts";
+import type { QueueSnapshot } from "../shared/queue.ts";
 import { planFor, estimateBytes, keepEverything, type Selection } from "../shared/estimate.ts";
 
 /**
@@ -48,7 +48,8 @@ export function App() {
   const [selections, setSelections] = useState<Map<string, Selection>>(new Map());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [job, setJob] = useState<Job | null>(null);
+  const [queue, setQueue] = useState<QueueSnapshot | null>(null);
+  const [showQueue, setShowQueue] = useState(false);
   const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
   const [presetLoaded, setPresetLoaded] = useState(false);
   const [presetSaving, setPresetSaving] = useState(false);
@@ -72,17 +73,10 @@ export function App() {
     }
   }, []);
 
-  // One live stream for job progress. SSE reconnects on its own.
+  // One live stream for the whole queue. SSE reconnects on its own.
   useEffect(() => {
-    const source = new EventSource("/api/jobs/events");
-    source.addEventListener("snapshot", (event) => {
-      const all = JSON.parse((event as MessageEvent<string>).data) as Job[];
-      const active = all.find((j) => j.state === "encoding" || j.state === "review");
-      if (active) setJob(active);
-    });
-    source.addEventListener("job", (event) => {
-      setJob(JSON.parse((event as MessageEvent<string>).data) as Job);
-    });
+    const source = new EventSource("/api/queue/events");
+    source.onmessage = (event) => setQueue(JSON.parse(event.data) as QueueSnapshot);
     return () => source.close();
   }, []);
 
@@ -213,22 +207,28 @@ export function App() {
   };
 
   const pinned = listing ? bookmarks.some((b) => b.path === listing.path) : false;
-  const busy = job !== null && (job.state === "encoding" || job.state === "verifying");
+  const queuedPaths = useMemo(
+    () => new Set((queue?.items ?? []).filter((i) => i.state === "queued" || i.state === "running").map((i) => i.path)),
+    [queue],
+  );
 
-  const convert = async (path: string, selection: Selection) => {
+  /** Queue whatever is selected, or one file from its own panel. */
+  const enqueue = async (paths: string[]) => {
     setNote(null);
+    const items = paths.map((path) => {
+      const entry = videos.find((e) => e.path === path);
+      const chosen = selections.get(path) ?? (entry?.probe ? keepEverything(entry.probe) : { audio: [], subtitles: [] });
+      return { path, selection: chosen };
+    });
     try {
-      setJob(await api.startJob(path, selection, preset, false));
-    } catch (err) {
-      setNote((err as Error).message);
-    }
-  };
-
-  const jobAction = async (action: "accept" | "discard" | "cancel") => {
-    if (!job) return;
-    try {
-      await api.jobAction(job.id, action);
-      if (action !== "cancel") void go(listing?.path);
+      const { added, skipped } = await api.addToQueue(items, preset);
+      setShowQueue(true);
+      setNote(
+        skipped.length === 0
+          ? `Added ${added} to the queue.`
+          : `Added ${added} · ${skipped.length} skipped — ${skipped[0]!.reason}`,
+      );
+      if (added > 0) setSelected(new Set());
     } catch (err) {
       setNote((err as Error).message);
     }
@@ -240,6 +240,8 @@ export function App() {
         health={health}
         preset={preset}
         saving={presetSaving}
+        queue={queue}
+        onOpenQueue={() => setShowQueue((v) => !v)}
         onOpenQuality={() => setShowQuality((v) => !v)}
       />
 
@@ -334,8 +336,8 @@ export function App() {
                 anySelected={selected.size > 0}
                 selectedCount={selected.size}
                 onApplyTracks={applyTracksToSelection}
-                onConvert={convert}
-                busy={busy}
+                onConvert={(path: string) => enqueue([path])}
+                queuedPaths={queuedPaths}
                 preset={preset}
                 expanded={expanded}
                 onExpand={(path) => setExpanded((prev) => (prev === path ? null : path))}
@@ -349,13 +351,16 @@ export function App() {
         </main>
       </div>
 
-      {job && (
-        <JobPanel
-          job={job}
-          onAccept={() => jobAction("accept")}
-          onDiscard={() => jobAction("discard")}
-          onCancel={() => jobAction("cancel")}
-          onDismiss={() => setJob(null)}
+      {showQueue && queue && (
+        <QueuePanel
+          snapshot={queue}
+          onPause={() => api.queueAction("pause").catch((e: Error) => setNote(e.message))}
+          onResume={() => api.queueAction("resume").catch((e: Error) => setNote(e.message))}
+          onClear={() => api.queueAction("clear").catch((e: Error) => setNote(e.message))}
+          onRemove={(id) => api.removeFromQueue(id).catch((e: Error) => setNote(e.message))}
+          onAccept={(id) => api.queueItemAction(id, "accept").then(() => go(listing?.path)).catch((e: Error) => setNote(e.message))}
+          onDiscard={(id) => api.queueItemAction(id, "discard").catch((e: Error) => setNote(e.message))}
+          onClose={() => setShowQueue(false)}
         />
       )}
 
@@ -369,8 +374,13 @@ export function App() {
           {trimmed > 0 && <span className="trimmed">{trimmed} retrimmed · </span>}
           {selected.size} selected · <span className="total">{bytes(recoverable)} recoverable</span>
         </span>
-        <button className="cta" disabled title="Queueing arrives in phase 02. Phase 01 cannot modify any file.">
-          Add to queue — phase 02
+        <button
+          className="cta"
+          disabled={selected.size === 0}
+          onClick={() => enqueue([...selected])}
+          title={selected.size === 0 ? "Select files first" : `Queue ${selected.size} file${selected.size === 1 ? "" : "s"}`}
+        >
+          {selected.size > 0 ? `Add ${selected.size} to queue` : "Add to queue"}
         </button>
       </footer>
     </div>
@@ -378,13 +388,18 @@ export function App() {
 }
 
 function Hud({
-  health, preset, saving, onOpenQuality,
+  health, preset, saving, queue, onOpenQueue, onOpenQuality,
 }: {
   health: HealthReport | null;
   preset: Preset;
   saving: boolean;
+  queue: QueueSnapshot | null;
+  onOpenQueue: () => void;
   onOpenQuality: () => void;
 }) {
+  const active = queue?.items.find((i) => i.state === "running") ?? null;
+  const waiting = queue?.totals.queued ?? 0;
+  const needsYou = queue?.items.filter((i) => i.state === "review").length ?? 0;
   const [showHealth, setShowHealth] = useState(false);
   const problems = health?.checks.filter((c) => !c.ok) ?? [];
   const ok = health !== null && problems.length === 0;
@@ -418,6 +433,24 @@ function Hud({
       )}
 
       <span className="spacer" />
+
+      {/* The queue has to be reachable, not just appear when you add to it. */}
+      <button
+        className={`qopen queuebtn${active ? " live" : ""}${needsYou > 0 ? " needs" : ""}`}
+        onClick={onOpenQueue}
+        title={active ? `Encoding ${active.name}` : waiting > 0 ? `${waiting} waiting` : "Nothing queued"}
+      >
+        <span className="qlabel">Queue</span>
+        <span className="qvalue">
+          {active
+            ? `${Math.round(((active.progress?.fraction ?? 0) * 100))}%${waiting ? ` · ${waiting} to go` : ""}`
+            : waiting > 0
+              ? `${waiting} waiting`
+              : queue && !queue.running ? "paused" : "idle"}
+        </span>
+        {needsYou > 0 && <span className="needsyou">{needsYou} to review</span>}
+      </button>
+
       <button className="qopen" onClick={onOpenQuality} title="Quality settings for the next encode">
         <span className="qlabel">Quality</span>
         <span className="qvalue">
@@ -432,7 +465,7 @@ function Hud({
 
 function Listing({
   listing, selected, onToggle, onOpen, allSelected, onToggleAll, anySelected, selectedCount,
-  onApplyTracks, onConvert, busy, preset, expanded, onExpand, selections, onSelectionChange,
+  onApplyTracks, onConvert, queuedPaths, preset, expanded, onExpand, selections, onSelectionChange,
 }: {
   listing: BrowseResponse;
   selected: Set<string>;
@@ -443,8 +476,8 @@ function Listing({
   anySelected: boolean;
   selectedCount: number;
   onApplyTracks: (path: string, selection: Selection) => void;
-  onConvert: (path: string, selection: Selection) => void;
-  busy: boolean;
+  onConvert: (path: string) => void;
+  queuedPaths: Set<string>;
   preset: Preset;
   expanded: string | null;
   onExpand: (path: string) => void;
@@ -495,8 +528,8 @@ function Listing({
             onOpen={() => onOpen(entry.path)}
             selectedCount={selectedCount}
             onApplyTracks={(sel) => onApplyTracks(entry.path, sel)}
-            onConvert={(sel) => onConvert(entry.path, sel)}
-            busy={busy}
+            onConvert={() => onConvert(entry.path)}
+            queued={queuedPaths.has(entry.path)}
             preset={preset}
             expanded={expanded === entry.path}
             onExpand={() => onExpand(entry.path)}
@@ -510,7 +543,7 @@ function Listing({
 }
 
 function Row({
-  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks, onConvert, busy, preset,
+  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks, onConvert, queued, preset,
   expanded, onExpand, selection, onSelectionChange,
 }: {
   entry: DirEntry;
@@ -519,8 +552,8 @@ function Row({
   onOpen: () => void;
   selectedCount: number;
   onApplyTracks: (selection: Selection) => void;
-  onConvert: (selection: Selection) => void;
-  busy: boolean;
+  onConvert: () => void;
+  queued: boolean;
   preset: Preset;
   expanded: boolean;
   onExpand: () => void;
@@ -609,7 +642,7 @@ function Row({
               isSelected={checked}
               onApplyToSelection={onApplyTracks}
               onConvert={onConvert}
-              busy={busy}
+              queued={queued}
               canConvert={Boolean(a && (a.videoWork || a.audioWork || selection) && !a.blockedReason)}
             />
           </td>

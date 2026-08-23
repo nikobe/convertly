@@ -151,7 +151,8 @@ filesystem without going through it.
 2. One file end to end. *(steps 1–4 built: command builder, encode runner,
    verification gate, quarantine + atomic replace. Arr rescan and Plex refresh
    still to do, and there is no UI trigger yet — jobs run via `runJob`.)*
-3. The queue: persistent, SSE progress, pause/resume/cancel, add-while-running.
+3. The queue *(built)*: persistent in SQLite, SSE progress, pause/resume,
+   cancel, add-while-running, accept/discard per item.
 4. Governors: time window, batch rhythm, thermal ceiling, playback-aware
    pause, disk guard.
 5. Polish: smart lists, savings ledger, sample estimator, review tray.
@@ -206,6 +207,25 @@ The built-in `DEFAULT_PRESET` is only the fallback when nothing is stored.
   cannot undo, so it needs a deliberate second click and stays off by default.
 - The server validates presets independently of the UI, so a stale client or a
   hand-rolled request cannot produce a nonsense ffmpeg command.
+
+## The queue
+
+`queue.ts` drains it one job at a time — concurrency 1, for the reason in
+"Locked decisions". The queue is a table, not an in-memory list, so a crash or
+a power cut mid-batch resumes where it stopped: anything still marked
+`running` at startup is requeued, since a process that died did not finish it.
+
+- Adding is a batch operation that reports what it *skipped* and why, rather
+  than failing the lot because one file is already queued. Files with nothing
+  to do are refused at that point — queueing one burns an encode producing a
+  copy that then fails the size gate.
+- `path` is unique in the table, so the same file cannot be queued twice and
+  have two encodes race for one output.
+- Pause lets the running job finish and starts nothing new. Cancel aborts the
+  running one; the original is untouched either way.
+- A `review` item keeps its encode on disk, so accepting later costs no
+  re-encode. Removing or discarding it deletes that file rather than orphaning
+  it.
 
 ## The encode pipeline
 

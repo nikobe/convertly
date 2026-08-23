@@ -6,7 +6,7 @@ import type { Store } from "../db.ts";
 import type { Scanner } from "../scanner.ts";
 import type { Binary } from "../binaries.ts";
 import { resolveWithinRoots, PathNotAllowedError } from "../paths.ts";
-import type { JobRunner } from "../jobs.ts";
+import type { Queue } from "../queue.ts";
 import { DEFAULT_PRESET, type Preset } from "../../shared/preset.ts";
 import type { Selection } from "../../shared/estimate.ts";
 import type { HealthReport } from "../../shared/types.ts";
@@ -18,11 +18,11 @@ export interface Deps {
   scanner: Scanner;
   ffprobe: Binary;
   ffmpeg: Binary | null;
-  jobs: JobRunner;
+  queue: Queue;
 }
 
 export async function registerApi(app: FastifyInstance, deps: Deps): Promise<void> {
-  const { config, store, scanner, ffprobe, ffmpeg, jobs } = deps;
+  const { config, store, scanner, ffprobe, ffmpeg, queue } = deps;
 
   app.get("/api/health", async (): Promise<HealthReport> => {
     const checks: HealthReport["checks"] = [
@@ -129,61 +129,51 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     return store.savePreset(merged, true);
   });
 
-  // ── jobs ─────────────────────────────────────────────────────────────
+  // ── queue ────────────────────────────────────────────────────────────
 
-  app.get("/api/jobs", async () => jobs.list());
+  app.get("/api/queue", async () => queue.snapshot());
 
-  app.post("/api/jobs", async (request, reply) => {
+  app.post("/api/queue", async (request, reply) => {
     if (!ffmpeg) return reply.code(503).send({ error: "No ffmpeg available — nothing can be encoded." });
 
     const body = request.body as {
-      path?: string;
-      selection?: Selection;
+      items?: { path?: string; selection?: Selection }[];
       preset?: Partial<Preset>;
-      replace?: boolean;
     };
-    if (!body?.path) return reply.code(400).send({ error: "A path is required." });
-
-    let resolved;
-    try {
-      resolved = resolveWithinRoots(body.path, config.roots);
-    } catch {
-      return reply.code(403).send({ error: "That file is outside your configured media roots." });
+    if (!Array.isArray(body?.items) || body.items.length === 0) {
+      return reply.code(400).send({ error: "Nothing to add." });
     }
 
-    try {
-      const job = await jobs.start({
-        path: resolved.path,
-        selection: body.selection,
-        // An explicit preset wins; otherwise the saved default, not the built-in.
-        preset: { ...store.defaultPreset(), ...body.preset },
-        // Replacing has to be asked for explicitly. The default encodes and
-        // verifies, then waits for a person.
-        replace: body.replace === true,
-      });
-      return reply.code(202).send(job);
-    } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
+    const entries: { path: string; selection?: Selection }[] = [];
+    const rejected: { path: string; reason: string }[] = [];
+    for (const item of body.items) {
+      if (!item?.path) continue;
+      try {
+        const resolved = resolveWithinRoots(item.path, config.roots);
+        entries.push({ path: resolved.path, selection: item.selection });
+      } catch {
+        rejected.push({ path: item.path, reason: "Outside your configured media roots." });
+      }
     }
+
+    const preset = { ...store.defaultPreset(), ...body.preset };
+    const result = await queue.add(entries, preset);
+    return { added: result.added, skipped: [...result.skipped, ...rejected] };
   });
 
-  /** Live job updates. One-way, so SSE rather than a socket layer. */
-  app.get("/api/jobs/events", async (request, reply) => {
+  /** Live queue updates. One-way, so SSE rather than a socket layer. */
+  app.get("/api/queue/events", async (request, reply) => {
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
       "x-accel-buffering": "no",
     });
-    reply.raw.write(`event: snapshot\ndata: ${JSON.stringify(jobs.list())}\n\n`);
-
-    const unsubscribe = jobs.subscribe((job) => {
-      reply.raw.write(`event: job\ndata: ${JSON.stringify(job)}\n\n`);
-    });
-    // Proxies and laptops closing lids both kill idle streams; a comment frame
-    // is cheap and keeps it alive.
+    const send = (snapshot: unknown) => reply.raw.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+    send(queue.snapshot());
+    const unsubscribe = queue.subscribe(send);
+    // Idle streams get dropped by proxies and sleeping laptops alike.
     const keepAlive = setInterval(() => reply.raw.write(": ping\n\n"), 20_000);
-
     request.raw.on("close", () => {
       clearInterval(keepAlive);
       unsubscribe();
@@ -191,29 +181,34 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     return reply;
   });
 
-  app.post("/api/jobs/:id/accept", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    try {
-      return jobs.accept(id);
-    } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
-    }
+  app.post("/api/queue/pause", async () => { queue.pause(); return queue.snapshot(); });
+  app.post("/api/queue/resume", async () => { queue.resume(); return queue.snapshot(); });
+  app.post("/api/queue/clear", async () => ({ removed: queue.clearFinished() }));
+
+  app.post("/api/queue/reorder", async (request, reply) => {
+    const body = request.body as { ids?: string[] };
+    if (!Array.isArray(body?.ids)) return reply.code(400).send({ error: "An ordered list of ids is required." });
+    queue.reorder(body.ids.filter((id): id is string => typeof id === "string"));
+    return queue.snapshot();
   });
 
-  app.post("/api/jobs/:id/discard", async (request, reply) => {
+  app.delete("/api/queue/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    try {
-      return jobs.discard(id);
-    } catch (err) {
-      return reply.code(409).send({ error: (err as Error).message });
-    }
+    if (!queue.remove(id)) return reply.code(404).send({ error: "No such queue item." });
+    return reply.code(204).send();
   });
 
-  app.post("/api/jobs/:id/cancel", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    jobs.cancel(id);
-    return reply.code(202).send({ ok: true });
-  });
+  for (const action of ["accept", "discard"] as const) {
+    app.post(`/api/queue/:id/${action}`, async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        queue[action](id);
+        return queue.snapshot();
+      } catch (err) {
+        return reply.code(409).send({ error: (err as Error).message });
+      }
+    });
+  }
 
   app.delete("/api/bookmarks/:id", async (request, reply) => {
     const { id } = request.params as { id: string };

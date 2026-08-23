@@ -1,5 +1,5 @@
 import type { BrowseResponse, Bookmark, HealthReport, Root } from "../shared/types.ts";
-import type { Job } from "../shared/job.ts";
+import type { QueueSnapshot } from "../shared/queue.ts";
 import type { Selection } from "../shared/estimate.ts";
 import type { Preset } from "../shared/preset.ts";
 
@@ -41,23 +41,38 @@ export const api = {
     return body;
   },
 
-  async startJob(path: string, selection: Selection, preset: Partial<Preset>, replace: boolean): Promise<Job> {
-    const res = await fetch("/api/jobs", {
+  queue: () => get<QueueSnapshot>("/api/queue"),
+
+  async addToQueue(
+    items: { path: string; selection: Selection }[],
+    preset: Partial<Preset>,
+  ): Promise<{ added: number; skipped: { path: string; reason: string }[] }> {
+    const res = await fetch("/api/queue", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path, selection, preset, replace }),
+      body: JSON.stringify({ items, preset }),
     });
-    const body = (await res.json()) as Job & { error?: string };
-    if (!res.ok) throw new Error(body.error ?? "Could not start that job.");
+    const body = (await res.json()) as { added: number; skipped: { path: string; reason: string }[]; error?: string };
+    if (!res.ok) throw new Error(body.error ?? "Could not add those to the queue.");
     return body;
   },
 
-  async jobAction(id: string, action: "accept" | "discard" | "cancel"): Promise<void> {
-    const res = await fetch(`/api/jobs/${id}/${action}`, { method: "POST" });
+  async queueAction(action: "pause" | "resume" | "clear"): Promise<void> {
+    const res = await fetch(`/api/queue/${action}`, { method: "POST" });
+    if (!res.ok) throw new Error(`Could not ${action} the queue.`);
+  },
+
+  async queueItemAction(id: string, action: "accept" | "discard"): Promise<void> {
+    const res = await fetch(`/api/queue/${id}/${action}`, { method: "POST" });
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(body?.error ?? `Could not ${action} that job.`);
+      throw new Error(body?.error ?? `Could not ${action} that item.`);
     }
+  },
+
+  async removeFromQueue(id: string): Promise<void> {
+    const res = await fetch(`/api/queue/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Could not remove that item.");
   },
 
   async removeBookmark(id: number): Promise<void> {

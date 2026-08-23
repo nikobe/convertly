@@ -10,8 +10,8 @@ interface Props {
   selectedCount: number;
   isSelected: boolean;
   onApplyToSelection: (selection: Selection) => void;
-  onConvert: (selection: Selection) => void;
-  busy: boolean;
+  onConvert: () => void;
+  queued: boolean;
   canConvert: boolean;
 }
 
@@ -19,7 +19,7 @@ interface Props {
  * Per-file track chooser. Read-only in phase 01 — it changes the projection,
  * not the file — but the choice it records is what phase 02 will act on.
  */
-export function TrackPanel({ entry, blockedReason, selection, onChange, selectedCount, isSelected, onApplyToSelection, onConvert, busy, canConvert }: Props) {
+export function TrackPanel({ entry, blockedReason, selection, onChange, selectedCount, isSelected, onApplyToSelection, onConvert, queued, canConvert }: Props) {
   const probe = entry.probe;
   if (!probe) return null;
 
@@ -128,8 +128,8 @@ export function TrackPanel({ entry, blockedReason, selection, onChange, selected
         {/* The primary action leads: right-aligning it put it off-screen on a
             narrow window, because the table sets a min-width. */}
         {canConvert ? (
-          <button className="convert" onClick={() => onConvert(selection)} disabled={busy}>
-            {busy ? "A job is running" : "Encode and check"}
+          <button className="convert" onClick={onConvert} disabled={queued}>
+            {queued ? "In the queue" : "Add to queue"}
           </button>
         ) : (
           <span className="tnote">{blockedReason ? "Excluded, see above." : "Nothing to do on this file."}</span>
