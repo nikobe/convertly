@@ -362,3 +362,56 @@ td.name button.expander .fname { flex: 1; }
   color: var(--amber-hi); font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* ── quality settings ──────────────────────────────────── */
+
+.hud button.qopen {
+  border: 1px solid var(--rule-hi); color: var(--text-dim);
+  padding: 0.1rem 0.55rem; font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap;
+}
+.hud button.qopen:hover { border-color: var(--amber); color: var(--amber); }
+.hud .dirty { color: var(--amber); margin-left: 0.35rem; }
+
+.quality {
+  border-bottom: 1px solid var(--rule-hi);
+  background: var(--panel);
+  padding: 0.8rem 1rem 0.9rem;
+  display: flex; flex-direction: column; gap: 0.8rem;
+  max-height: 55vh; overflow-y: auto;
+}
+.qhead { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.qhead h2 {
+  margin: 0; font-size: 12px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--amber); font-weight: 400;
+}
+.qhead .qsub { font-size: 11px; color: var(--text-faint); }
+.qhead .spacer { flex: 1; }
+
+.qgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0.9rem 1.5rem; }
+.qfield { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.qfield > label {
+  font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-faint);
+}
+.qfield select {
+  background: var(--ground); color: var(--text); font: inherit; font-size: 12px;
+  border: 1px solid var(--rule-hi); padding: 0.2rem 0.35rem;
+}
+.qfield select:hover { border-color: var(--amber-dim); }
+
+.qsteps { display: flex; flex-wrap: wrap; gap: 1px; }
+.qstep {
+  border: 1px solid var(--rule); color: var(--text-dim);
+  padding: 0.15rem 0.5rem; font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.qstep:hover { border-color: var(--amber-dim); color: var(--amber-hi); }
+.qstep.on { border-color: var(--amber); color: var(--ground); background: var(--amber); }
+.qstep.danger.on { border-color: var(--warn); background: var(--warn); }
+
+.qnote { margin: 0; font-size: 11px; color: var(--text-faint); line-height: 1.45; }
+.qnote .qcrf { color: var(--amber-dim); margin-left: 0.35rem; }
+.qwarn { color: var(--warn); }
+
+.qactions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  padding-top: 0.6rem; border-top: 1px solid var(--rule); }

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Probe, Bookmark, Conversion } from "../shared/types.ts";
+import { DEFAULT_PRESET, type Preset } from "../shared/preset.ts";
 
 export class Store {
   private db: DatabaseSync;
@@ -43,6 +44,14 @@ export class Store {
         vmaf            REAL,
         ffmpeg_version  TEXT NOT NULL,
         quarantine_path TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS presets (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        json       TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS settings (
@@ -145,6 +154,44 @@ export class Store {
   /** Forget a conversion — used when an original is restored. */
   forgetConversion(path: string): void {
     this.db.prepare("DELETE FROM conversions WHERE path = ?").run(path);
+  }
+
+  listPresets(): Preset[] {
+    const rows = this.db
+      .prepare("SELECT json FROM presets ORDER BY is_default DESC, name COLLATE NOCASE")
+      .all() as { json: string }[];
+    return rows.map((r) => JSON.parse(r.json) as Preset);
+  }
+
+  /** The preset offered on the next encode. Falls back to the built-in. */
+  defaultPreset(): Preset {
+    const row = this.db.prepare("SELECT json FROM presets WHERE is_default = 1 LIMIT 1").get() as
+      | { json: string }
+      | undefined;
+    if (!row) return DEFAULT_PRESET;
+    try {
+      return { ...DEFAULT_PRESET, ...(JSON.parse(row.json) as Preset) };
+    } catch {
+      return DEFAULT_PRESET;
+    }
+  }
+
+  savePreset(preset: Preset, makeDefault: boolean): Preset {
+    this.db
+      .prepare(
+        `INSERT INTO presets (id, name, json, is_default, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, json = excluded.json, updated_at = excluded.updated_at`,
+      )
+      .run(preset.id, preset.name, JSON.stringify(preset), makeDefault ? 1 : 0, Date.now());
+    if (makeDefault) {
+      this.db.prepare("UPDATE presets SET is_default = 0 WHERE id != ?").run(preset.id);
+      this.db.prepare("UPDATE presets SET is_default = 1 WHERE id = ?").run(preset.id);
+    }
+    return preset;
+  }
+
+  deletePreset(id: string): boolean {
+    return this.db.prepare("DELETE FROM presets WHERE id = ?").run(id).changes > 0;
   }
 
   listBookmarks(): Bookmark[] {

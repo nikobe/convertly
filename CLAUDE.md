@@ -167,6 +167,24 @@ differ are skipped and counted in the status line rather than guessed at — an
 extended cut with a different mux must not silently inherit choices made for
 a standard episode.
 
+## Quality controls and presets
+
+Quality is a control, not just a default. The HUD shows the active setting and
+opens a panel with picture quality, encoder speed, downscale, replacement
+audio bitrate and 10-bit. "Save as my default" persists to the `presets` table
+and is what every future encode is offered — the built-in `DEFAULT_PRESET` is
+only the fallback when nothing is saved.
+
+- CRF is exposed by what it *does* ("Same quality", "Very good", "Good"), with
+  the raw number shown alongside. A bare "20" tells nobody anything.
+- **Changing quality moves the projected size in every row**, via `crfFactor`
+  (six CRF steps ≈ double or halve the bitrate). A control that did not move
+  the number it claims to control would be worse than no control.
+- **Downscale asks twice.** Resolution is the only setting a later re-encode
+  cannot undo, so it needs a deliberate second click and stays off by default.
+- The server validates presets independently of the UI, so a stale client or a
+  hand-rolled request cannot produce a nonsense ffmpeg command.
+
 ## The encode pipeline
 
 `runJob` in `pipeline.ts` is the whole of it: build, encode, verify, swap, in

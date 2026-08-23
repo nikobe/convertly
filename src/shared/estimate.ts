@@ -172,6 +172,18 @@ export function planFor(probe: Probe): Plan {
   };
 }
 
+/**
+ * How much bitrate a given CRF asks for, relative to the CRF 20 baseline the
+ * ratios above were derived at.
+ *
+ * The rule of thumb is that six CRF steps roughly double or halve the
+ * bitrate. Approximate, but it has to be here or the quality control would
+ * move a slider without moving the projected size.
+ */
+export function crfFactor(crf: number): number {
+  return Math.pow(2, (20 - crf) / 6);
+}
+
 /** Which tracks survive. Stream indexes, matching Probe.audio/subtitles. */
 export interface Selection {
   audio: number[];
@@ -191,7 +203,12 @@ export function keepEverything(probe: Probe): Selection {
  * primary audio track re-encoded to AC3 640k if the target chain can't play it,
  * every other kept track passed through untouched, excluded tracks gone.
  */
-export function estimateBytes(probe: Probe, plan: Plan, selection: Selection): number | null {
+export function estimateBytes(
+  probe: Probe,
+  plan: Plan,
+  selection: Selection,
+  options: { crf?: number; maxHeight?: number | null } = {},
+): number | null {
   const { durationSec, video } = probe;
   if (!durationSec || !video) return null;
 
@@ -210,7 +227,16 @@ export function estimateBytes(probe: Probe, plan: Plan, selection: Selection): n
       (plan.bloated ? BLOATED_BPP / (plan.bitsPerPixel ?? 1) : 1);
     // Hardware HEVC needs roughly 30% more bitrate than x265 for equal quality.
     const hardwarePenalty = plan.encoder === "hevc_videotoolbox" ? 1.3 : 1;
-    videoBitrate = Math.round(videoBitrate * ratio * hardwarePenalty);
+    const quality = crfFactor(options.crf ?? 20);
+    videoBitrate = Math.round(videoBitrate * ratio * hardwarePenalty * quality);
+  }
+
+  // A resolution cap cuts bitrate roughly with pixel count, discounted because
+  // a downscale is easier to encode than the pixel ratio alone suggests.
+  const cap = options.maxHeight ?? null;
+  if (cap && video.height > cap) {
+    const pixelRatio = (cap * cap) / (video.height * video.height);
+    videoBitrate = Math.round(videoBitrate * Math.pow(pixelRatio, 0.75));
   }
 
   const primary = primaryAudio(keptAudio);

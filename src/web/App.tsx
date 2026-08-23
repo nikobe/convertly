@@ -5,6 +5,8 @@ import { bytes, duration } from "./format.ts";
 import { TrackPanel } from "./TrackPanel.tsx";
 import { JobPanel } from "./JobPanel.tsx";
 import { FileName } from "./FileName.tsx";
+import { QualityPanel } from "./QualityPanel.tsx";
+import { DEFAULT_PRESET, type Preset } from "../shared/preset.ts";
 import type { Job } from "../shared/job.ts";
 import { planFor, estimateBytes, keepEverything, type Selection } from "../shared/estimate.ts";
 
@@ -20,10 +22,17 @@ function sameLayout(a: NonNullable<DirEntry["probe"]>, b: NonNullable<DirEntry["
 }
 
 /** Projection for one file under the track choices currently in force. */
-function project(entry: DirEntry, selection: Selection | undefined): { after: number | null; saving: number | null } {
+function project(
+  entry: DirEntry,
+  selection: Selection | undefined,
+  preset: Preset,
+): { after: number | null; saving: number | null } {
   if (!entry.probe) return { after: null, saving: null };
   const chosen = selection ?? keepEverything(entry.probe);
-  const after = estimateBytes(entry.probe, planFor(entry.probe), chosen);
+  const after = estimateBytes(entry.probe, planFor(entry.probe), chosen, {
+    crf: preset.crf,
+    maxHeight: preset.maxHeight,
+  });
   return { after, saving: after === null ? null : Math.max(0, entry.size! - after) };
 }
 
@@ -40,6 +49,9 @@ export function App() {
   const [anchor, setAnchor] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
+  const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
+  const [savedPreset, setSavedPreset] = useState<Preset>(DEFAULT_PRESET);
+  const [showQuality, setShowQuality] = useState(false);
 
   const go = useCallback(async (path?: string) => {
     setLoading(true);
@@ -77,6 +89,9 @@ export function App() {
     api.health().then(setHealth).catch(() => setHealth(null));
     api.roots().then(setRoots).catch(() => setRoots([]));
     api.bookmarks().then(setBookmarks).catch(() => setBookmarks([]));
+    api.presets()
+      .then(({ active }) => { setPreset(active); setSavedPreset(active); })
+      .catch(() => undefined);
     void go();
   }, [go]);
 
@@ -89,8 +104,8 @@ export function App() {
     () =>
       videos
         .filter((e) => selected.has(e.path))
-        .reduce((sum, e) => sum + (project(e, selections.get(e.path)).saving ?? 0), 0),
-    [videos, selected, selections],
+        .reduce((sum, e) => sum + (project(e, selections.get(e.path), preset).saving ?? 0), 0),
+    [videos, selected, selections, preset],
   );
   const trimmed = useMemo(() => selections.size, [selections]);
 
@@ -182,11 +197,24 @@ export function App() {
   const convert = async (path: string, selection: Selection) => {
     setNote(null);
     try {
-      setJob(await api.startJob(path, selection, {}, false));
+      setJob(await api.startJob(path, selection, preset, false));
     } catch (err) {
       setNote((err as Error).message);
     }
   };
+
+  const saveDefault = async () => {
+    try {
+      const saved = await api.saveDefaultPreset(preset);
+      setSavedPreset(saved);
+      setPreset(saved);
+      setNote("Saved. This is what future encodes will be offered.");
+    } catch (err) {
+      setNote((err as Error).message);
+    }
+  };
+
+  const presetIsSaved = JSON.stringify(preset) === JSON.stringify(savedPreset);
 
   const jobAction = async (action: "accept" | "discard" | "cancel") => {
     if (!job) return;
@@ -200,7 +228,23 @@ export function App() {
 
   return (
     <div className="app">
-      <Hud health={health} />
+      <Hud
+        health={health}
+        preset={preset}
+        dirty={!presetIsSaved}
+        onOpenQuality={() => setShowQuality((v) => !v)}
+      />
+
+      {showQuality && (
+        <QualityPanel
+          preset={preset}
+          onChange={setPreset}
+          onSaveDefault={saveDefault}
+          onClose={() => setShowQuality(false)}
+          saved={presetIsSaved}
+          isDefault={presetIsSaved}
+        />
+      )}
 
       <div className="body">
         <nav className="rail">
@@ -286,6 +330,7 @@ export function App() {
                 onApplyTracks={applyTracksToSelection}
                 onConvert={convert}
                 busy={busy}
+                preset={preset}
                 expanded={expanded}
                 onExpand={(path) => setExpanded((prev) => (prev === path ? null : path))}
                 selections={selections}
@@ -326,7 +371,14 @@ export function App() {
   );
 }
 
-function Hud({ health }: { health: HealthReport | null }) {
+function Hud({
+  health, preset, dirty, onOpenQuality,
+}: {
+  health: HealthReport | null;
+  preset: Preset;
+  dirty: boolean;
+  onOpenQuality: () => void;
+}) {
   return (
     <header className="hud">
       <span className="brand">Convertly</span>
@@ -339,14 +391,19 @@ function Hud({ health }: { health: HealthReport | null }) {
         ))}
       </span>
       <span className="spacer" />
-      <span>read-only · phase 01</span>
+      <button className="qopen" onClick={onOpenQuality} title="Quality settings for the next encode">
+        Quality: CRF {preset.crf} · {preset.x265Preset}
+        {preset.maxHeight ? ` · ${preset.maxHeight}p cap` : ""}
+        {dirty ? " ·" : ""}
+        {dirty && <span className="dirty" aria-label="unsaved">unsaved</span>}
+      </button>
     </header>
   );
 }
 
 function Listing({
   listing, selected, onToggle, onOpen, allSelected, onToggleAll, anySelected, selectedCount,
-  onApplyTracks, onConvert, busy, expanded, onExpand, selections, onSelectionChange,
+  onApplyTracks, onConvert, busy, preset, expanded, onExpand, selections, onSelectionChange,
 }: {
   listing: BrowseResponse;
   selected: Set<string>;
@@ -359,6 +416,7 @@ function Listing({
   onApplyTracks: (path: string, selection: Selection) => void;
   onConvert: (path: string, selection: Selection) => void;
   busy: boolean;
+  preset: Preset;
   expanded: string | null;
   onExpand: (path: string) => void;
   selections: Map<string, Selection>;
@@ -410,6 +468,7 @@ function Listing({
             onApplyTracks={(sel) => onApplyTracks(entry.path, sel)}
             onConvert={(sel) => onConvert(entry.path, sel)}
             busy={busy}
+            preset={preset}
             expanded={expanded === entry.path}
             onExpand={() => onExpand(entry.path)}
             selection={selections.get(entry.path)}
@@ -422,7 +481,7 @@ function Listing({
 }
 
 function Row({
-  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks, onConvert, busy,
+  entry, checked, onToggle, onOpen, selectedCount, onApplyTracks, onConvert, busy, preset,
   expanded, onExpand, selection, onSelectionChange,
 }: {
   entry: DirEntry;
@@ -433,6 +492,7 @@ function Row({
   onApplyTracks: (selection: Selection) => void;
   onConvert: (selection: Selection) => void;
   busy: boolean;
+  preset: Preset;
   expanded: boolean;
   onExpand: () => void;
   selection: Selection | undefined;
@@ -461,7 +521,7 @@ function Row({
 
   const a = entry.assessment;
   const trimmable = Boolean(entry.probe && entry.probe.audio.length + entry.probe.subtitles.length > 1);
-  const { after, saving } = project(entry, selection);
+  const { after, saving } = project(entry, selection, preset);
   // A file needing no re-encode is still worth queueing once tracks are cut.
   const work = Boolean(a && (a.videoWork || a.audioWork || (selection && saving)) && !a.blockedReason);
 

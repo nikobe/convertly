@@ -101,6 +101,25 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     return store.addBookmark(label.slice(0, 80), resolved.path, resolved.root.id);
   });
 
+  // ── presets ──────────────────────────────────────────────────────────
+
+  app.get("/api/presets", async () => ({
+    presets: store.listPresets(),
+    active: store.defaultPreset(),
+    builtIn: DEFAULT_PRESET,
+  }));
+
+  app.put("/api/presets/default", async (request, reply) => {
+    const body = request.body as Partial<Preset> | undefined;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "A preset is required." });
+
+    const merged: Preset = { ...DEFAULT_PRESET, ...body, id: "default", name: body.name?.slice(0, 60) || "My default" };
+    const problem = validatePreset(merged);
+    if (problem) return reply.code(400).send({ error: problem });
+
+    return store.savePreset(merged, true);
+  });
+
   // ── jobs ─────────────────────────────────────────────────────────────
 
   app.get("/api/jobs", async () => jobs.list());
@@ -127,7 +146,8 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
       const job = await jobs.start({
         path: resolved.path,
         selection: body.selection,
-        preset: { ...DEFAULT_PRESET, ...body.preset },
+        // An explicit preset wins; otherwise the saved default, not the built-in.
+        preset: { ...store.defaultPreset(), ...body.preset },
         // Replacing has to be asked for explicitly. The default encodes and
         // verifies, then waits for a person.
         replace: body.replace === true,
@@ -193,4 +213,21 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     if (!store.removeBookmark(numeric)) return reply.code(404).send({ error: "No such bookmark." });
     return reply.code(204).send();
   });
+}
+
+/** Keep a hand-edited or stale preset from producing a nonsense command. */
+function validatePreset(preset: Preset): string | null {
+  if (!Number.isInteger(preset.crf) || preset.crf < 14 || preset.crf > 30) {
+    return "Quality must be between 14 and 30.";
+  }
+  if (!["veryfast", "fast", "medium", "slow", "slower"].includes(preset.x265Preset)) {
+    return "Unknown encoder speed.";
+  }
+  if (preset.maxHeight !== null && (!Number.isInteger(preset.maxHeight) || preset.maxHeight < 240 || preset.maxHeight > 4320)) {
+    return "A resolution cap must be between 240 and 4320, or off.";
+  }
+  if (![192_000, 224_000, 384_000, 448_000, 640_000].includes(preset.ac3Bitrate)) {
+    return "Unsupported AC3 bitrate.";
+  }
+  return null;
 }

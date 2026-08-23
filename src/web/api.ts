@@ -28,6 +28,19 @@ export const api = {
     return res.json() as Promise<Bookmark>;
   },
 
+  presets: () => get<{ presets: Preset[]; active: Preset; builtIn: Preset }>("/api/presets"),
+
+  async saveDefaultPreset(preset: Preset): Promise<Preset> {
+    const res = await fetch("/api/presets/default", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(preset),
+    });
+    const body = (await res.json()) as Preset & { error?: string };
+    if (!res.ok) throw new Error(body.error ?? "Could not save that preset.");
+    return body;
+  },
+
   async startJob(path: string, selection: Selection, preset: Partial<Preset>, replace: boolean): Promise<Job> {
     const res = await fetch("/api/jobs", {
       method: "POST",
