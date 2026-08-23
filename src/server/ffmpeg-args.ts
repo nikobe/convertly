@@ -1,7 +1,7 @@
 import type { Probe, AudioTrack } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
 import {
-  AUDIO_REPLACE, HARDWARE_MIN_HEIGHT, primaryAudio, planFor,
+  HARDWARE_MIN_HEIGHT, primaryAudio, planFor, shouldReplaceAudio,
   type Selection,
 } from "../shared/estimate.ts";
 
@@ -17,6 +17,9 @@ export interface BuiltCommand {
   encoder: "libx265" | "hevc_videotoolbox" | "copy";
   /** Whether the primary was replaced with AC3 or joined by one. */
   audioPolicy: "replace" | "add";
+  /** How many streams the output should carry, for the verifier to check. */
+  expectedAudioStreams: number;
+  expectedSubtitleStreams: number;
   /** Output audio stream 0 — the one made default. */
   primaryAudioIndex: number | null;
   /** Set when the hardware path needs an explicit bitrate. */
@@ -46,7 +49,7 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   const keptSubs = probe.subtitles.filter((t) => selection.subtitles.includes(t.index));
 
   const plan = planFor(probe);
-  const policy = plan.atmos ? "add" : preset.audioPolicy;
+  const policy = preset.audioPolicy;
   const primary = keptAudio[0];
   const height = probe.video.height;
   const encoder = chooseEncoder(plan.videoWork, height, preset);
@@ -114,7 +117,7 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   const compatIndex = policy === "add" && primary ? keptAudio.length : -1;
 
   keptAudio.forEach((track, outputIndex) => {
-    const needsReplacing = AUDIO_REPLACE.has(track.codec.toLowerCase());
+    const needsReplacing = shouldReplaceAudio(track);
     if (policy === "add" || !needsReplacing) {
       args.push(`-c:a:${outputIndex}`, "copy");
       return;
@@ -146,12 +149,7 @@ export function buildCommand(input: BuildInput): BuiltCommand {
     }
     args.push(`-metadata:s:a:${compatIndex}`, "title=AC3 5.1 (compatibility)");
     if (primary.language) args.push(`-metadata:s:a:${compatIndex}`, `language=${primary.language}`);
-    notes.push(
-      plan.atmos
-        ? "Atmos detected: the original track is copied untouched and an AC3 5.1 track is added alongside it. " +
-          "Nothing is discarded — replacing it would throw away objects quarantine cannot give back."
-        : "Original audio kept, AC3 5.1 added alongside it.",
-    );
+    notes.push("Original audio kept, AC3 5.1 added alongside it.");
   }
 
   // The default track is the one a player should pick without help: the
@@ -169,10 +167,18 @@ export function buildCommand(input: BuildInput): BuiltCommand {
 
   args.push("-y", outputPath);
 
+  if (plan.atmos) {
+    notes.push("Atmos track copied untouched — the objects survive and the playback chain downmixes them.");
+  }
+
   return {
     args,
     encoder,
     audioPolicy: policy,
+    // The verifier compares against these rather than re-deriving them, so an
+    // added track cannot look like a census failure.
+    expectedAudioStreams: keptAudio.length + (compatIndex >= 0 ? 1 : 0),
+    expectedSubtitleStreams: keptSubs.length,
     primaryAudioIndex: keptAudio[0]?.index ?? null,
     targetVideoBitrate,
     notes,

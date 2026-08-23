@@ -164,34 +164,34 @@ test("the output path is the last argument and overwrite is explicit", () => {
   assert.equal(args.at(-2), "-y");
 });
 
-test("an Atmos track is kept and joined by AC3, never replaced", () => {
+test("an Atmos track is copied untouched, and nothing is added beside it", () => {
   const p = probe({ audio: [audio({ codec: "eac3", channels: 6, bitrate: 768_000, hasAtmos: true })] });
-  const { args, audioPolicy } = build(p);
+  const { args, expectedAudioStreams } = build(p);
 
-  assert.equal(audioPolicy, "add", "replacing would discard objects quarantine cannot give back");
-  // The source stream is mapped twice — copied, then encoded — and the audio
-  // outputs stay contiguous ahead of the subtitles.
   const maps = args.reduce<string[]>((acc, a, i) => (a === "-map" ? [...acc, args[i + 1]!] : acc), []);
-  assert.deepEqual(maps, ["0:0", "0:1", "0:1", "0:10"]);
-  assert.equal(arg(args, "-c:a:0"), "copy", "the Atmos track must survive untouched");
-  assert.equal(arg(args, "-c:a:1"), "ac3");
-  assert.equal(arg(args, "-b:a:1"), "640000");
+  assert.deepEqual(maps, ["0:0", "0:1", "0:10"], "the source track is mapped once");
+  assert.equal(arg(args, "-c:a:0"), "copy", "Atmos objects cannot be recovered, so never re-encode them");
+  assert.equal(expectedAudioStreams, 1, "an added AC3 track costs ~576 MB on a 2h film for no benefit here");
+  assert.equal(args.includes("-c:a:1"), false);
 });
 
-test("the added compatibility track is the one players default to", () => {
-  const p = probe({ audio: [audio({ codec: "eac3", channels: 6, hasAtmos: true })] });
-  const { args } = build(p);
-  assert.equal(arg(args, "-disposition:a:0"), "0", "the Atmos original should not be the default");
-  assert.equal(arg(args, "-disposition:a:1"), "default");
+test("TrueHD Atmos is copied even though plain TrueHD would be replaced", () => {
+  const atmos = build(probe({ audio: [audio({ codec: "truehd", channels: 8, hasAtmos: true })] }));
+  assert.equal(arg(atmos.args, "-c:a:0"), "copy");
+
+  const plain = build(probe({ audio: [audio({ codec: "truehd", channels: 8, hasAtmos: false })] }));
+  assert.equal(arg(plain.args, "-c:a:0"), "ac3", "lossless without Atmos is just large");
+  assert.match(arg(plain.args, "-filter:a:0") ?? "", /^pan=5\.1\|/);
 });
 
-test("Atmos forces add even when the preset says replace", () => {
-  const p = probe({ audio: [audio({ codec: "truehd", channels: 8, hasAtmos: true })] });
-  const { audioPolicy, args } = build(p, { ...DEFAULT_PRESET, audioPolicy: "replace" });
-  assert.equal(audioPolicy, "add");
-  assert.equal(arg(args, "-c:a:0"), "copy");
-  // 7.1 Atmos still needs the explicit downmix on the added track.
-  assert.match(arg(args, "-filter:a:1") ?? "", /^pan=5\.1\|/);
+test("the builder reports the stream counts the verifier checks against", () => {
+  const p = probe({
+    audio: [audio({ index: 1 }), audio({ index: 2, language: "rus" })],
+    subtitles: [sub({ index: 10 }), sub({ index: 11 })],
+  });
+  const built = build(p, DEFAULT_PRESET, { audio: [1, 2], subtitles: [10] });
+  assert.equal(built.expectedAudioStreams, 2);
+  assert.equal(built.expectedSubtitleStreams, 1);
 });
 
 test("a non-Atmos file still replaces, which is the bigger saving", () => {

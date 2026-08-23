@@ -18,7 +18,14 @@ export const VIDEO_REPLACE_RATIO: Record<string, number> = {
 /** Already efficient — no video work unless the file is grossly overweight. */
 export const EFFICIENT_VIDEO = new Set(["hevc", "av1", "vp9"]);
 
-/** Audio a basic Dolby Digital 5.1 chain will not direct-play. */
+/**
+ * Audio that causes actual trouble downstream and is worth re-encoding.
+ *
+ * Deliberately narrow. Dolby Digital Plus and Atmos are left alone: the
+ * playback chain here decodes and downmixes them without complaint, and an
+ * added AC3 track costs ~576 MB on a two-hour film for no benefit. DTS is the
+ * family that misbehaves, and lossless formats are simply enormous.
+ */
 export const AUDIO_REPLACE = new Set([
   "dts", "dts-hd", "dts-hd ma", "truehd", "flac",
   "pcm_s16le", "pcm_s24le", "pcm_bluray", "pcm_dvd", "mlp",
@@ -69,6 +76,17 @@ export function bitsPerPixel(bitrate: number | null, width: number, height: numb
  * match wins first, then an untagged track (on a foreign release the untagged
  * 5.1 is usually itself a dub), then channels, then the default flag.
  */
+/**
+ * Whether this track gets re-encoded to AC3.
+ *
+ * Atmos is never replaced whatever the codec — the objects cannot be
+ * recovered, and they play back fine here. TrueHD without Atmos is fair game.
+ */
+export function shouldReplaceAudio(track: AudioTrack): boolean {
+  if (track.hasAtmos) return false;
+  return AUDIO_REPLACE.has(track.codec.toLowerCase());
+}
+
 export function primaryAudio(tracks: AudioTrack[]): AudioTrack | null {
   if (tracks.length === 0) return null;
   return tracks.reduce((best, t) => (audioScore(t) > audioScore(best) ? t : best), tracks[0]!);
@@ -87,10 +105,6 @@ function audioScore(t: AudioTrack): number {
 export interface Plan {
   videoWork: boolean;
   audioWork: boolean;
-  /**
-   * Forced to "add" when the primary carries Atmos: replacing would discard
-   * objects that quarantine cannot give back once the window closes.
-   */
   audioPolicy: "replace" | "add";
   atmos: boolean;
   encoder: "libx265" | "hevc_videotoolbox" | null;
@@ -113,16 +127,12 @@ export function planFor(probe: Probe): Plan {
   const replaceRatio = VIDEO_REPLACE_RATIO[codec];
   const bloated = EFFICIENT_VIDEO.has(codec) && bpp !== null && bpp > BLOATED_BPP;
   const videoWork = replaceRatio !== undefined || bloated;
-  const primary = primaryAudio(probe.audio);
   const atmos = probe.audio.some((a) => a.hasAtmos);
-  // EAC3 and TrueHD Atmos will not direct-play on a basic Dolby Digital
-  // chain, so they still need an AC3 track — just not at the cost of the
-  // original.
-  const audioWork = probe.audio.some((a) => AUDIO_REPLACE.has(a.codec.toLowerCase())) || (atmos && Boolean(primary));
+  const audioWork = probe.audio.some(shouldReplaceAudio);
 
   return {
     videoWork,
-    audioPolicy: atmos ? "add" : "replace",
+    audioPolicy: "replace",
     atmos,
     audioWork,
     encoder: videoWork ? (video.height >= HARDWARE_MIN_HEIGHT ? "hevc_videotoolbox" : "libx265") : null,
@@ -181,7 +191,7 @@ export function estimateBytes(probe: Probe, plan: Plan, selection: Selection): n
       // Both survive: the original untouched, plus a new AC3 track.
       audioBitrate += (track.bitrate ?? 640_000) + AC3_BITRATE;
     } else if (isPrimary) {
-      audioBitrate += AUDIO_REPLACE.has(track.codec.toLowerCase()) ? AC3_BITRATE : track.bitrate ?? AC3_BITRATE;
+      audioBitrate += shouldReplaceAudio(track) ? AC3_BITRATE : track.bitrate ?? AC3_BITRATE;
     } else {
       audioBitrate += track.bitrate ?? 128_000;
     }

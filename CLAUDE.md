@@ -11,13 +11,17 @@ universally compatible choice. A 7.1 source needs an explicit, correctly
 weighted 7.1→5.1 downmix, not ffmpeg's default fold, which leaves dialogue
 sitting too low against the surrounds.
 
-**Except for Atmos, where the track is added, not replaced.** Converting the
-video never required touching the audio. Excluding Atmos files meant they
-never got converted at all; replacing the track meant discarding objects
-quarantine cannot give back. So the original is copied untouched and an AC3
-5.1 track is added beside it, marked default so players pick it. `planFor`
-forces `audioPolicy: "add"` whenever any track reports Atmos, and a preset
-saying `replace` cannot override that.
+**Replace only what actually misbehaves.** `shouldReplaceAudio` is the single
+rule: a track is re-encoded if it is in `AUDIO_REPLACE` *and* carries no
+Atmos. DTS is the family that causes trouble downstream, and lossless formats
+are simply enormous. Dolby Digital Plus and Atmos are left alone — the
+playback chain here (the playback client) decodes and downmixes them without
+complaint, so an added AC3 track would cost ~576 MB on a two-hour film for no
+benefit. TrueHD *without* Atmos is still replaced; it is just large.
+
+Video and audio are independent decisions. An H264 file with untouchable
+audio is still worth converting, and letting an audio constraint veto the
+video encode was a bug, not a policy.
 
 **Dolby Vision is still excluded outright** — its metadata does not survive
 this pipeline reliably. That is the only remaining hard block.

@@ -120,9 +120,9 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
       label: "ATMOS",
       tone: "note",
       title:
-        "Carries Atmos objects. They are kept: the original track is copied untouched and an AC3 5.1 track " +
-        "is added alongside it so your playback client has something to direct-play. The file saves less than a " +
-        "straight replace would, which is the correct trade here.",
+        "Carries Atmos objects. The track is copied untouched — no re-encode, nothing discarded. Your " +
+        "playback chain decodes and downmixes it, so an added AC3 track would cost space for no benefit. " +
+        "Only the video is re-encoded.",
     });
   }
 

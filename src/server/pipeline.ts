@@ -112,6 +112,8 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     source: probe,
     outputPath: tempPath,
     selection,
+    expectedAudioStreams: built.expectedAudioStreams,
+    expectedSubtitleStreams: built.expectedSubtitleStreams,
     skipVmaf: built.encoder === "copy",
     signal,
   });

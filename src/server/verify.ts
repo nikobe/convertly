@@ -27,6 +27,12 @@ export interface VerifyOptions {
   source: Probe;
   outputPath: string;
   selection: Selection;
+  /**
+   * Stream counts the command builder said it would produce. Re-deriving them
+   * from the selection was wrong the moment a job could add a track.
+   */
+  expectedAudioStreams?: number;
+  expectedSubtitleStreams?: number;
   /** Mean VMAF below this holds the job for review. */
   vmafFloor?: number;
   /** Output must be at least this much smaller, or it is not worth swapping. */
@@ -49,6 +55,7 @@ const DURATION_TOLERANCE_SEC = 0.5;
 export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   const {
     ffmpegPath, ffprobePath, source, outputPath, selection,
+    expectedAudioStreams, expectedSubtitleStreams,
     vmafFloor = 93, minShrinkRatio = 0.15, vmafSampleSeconds = 120, skipVmaf = false, signal,
   } = options;
 
@@ -80,8 +87,8 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
   }
 
   // ── every kept track arrived ─────────────────────────────────────────
-  const wantedAudio = source.audio.filter((t) => selection.audio.includes(t.index)).length;
-  const wantedSubs = source.subtitles.filter((t) => selection.subtitles.includes(t.index)).length;
+  const wantedAudio = expectedAudioStreams ?? source.audio.filter((t) => selection.audio.includes(t.index)).length;
+  const wantedSubs = expectedSubtitleStreams ?? source.subtitles.filter((t) => selection.subtitles.includes(t.index)).length;
   const gotAudio = outputProbe.audio.length;
   const gotSubs = outputProbe.subtitles.length;
   const censusOk = gotAudio === wantedAudio && gotSubs === wantedSubs;

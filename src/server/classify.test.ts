@@ -67,22 +67,18 @@ test("an already-efficient but bloated HEVC file is flagged", () => {
   assert.ok(labels(p).includes("BLOATED"));
 });
 
-test("Atmos is kept rather than blocking the file", () => {
-  // Converting the video never required touching the audio. Excluding these
-  // files meant nothing got converted; replacing the track meant objects were
-  // lost for good. Keeping the original and adding AC3 beside it does both.
+test("Atmos does not block the file and needs no audio work", () => {
   const p = probe({ audio: [audio({ codec: "truehd", hasAtmos: true })] });
   const a = assess(p);
-  assert.equal(a.blockedReason, null, "an Atmos file is convertible, just not replaceable");
+  assert.equal(a.blockedReason, null, "the video is H264 and worth converting regardless of the audio");
   assert.equal(a.videoWork, true);
+  assert.equal(a.audioWork, false, "the chain plays Atmos fine, so there is nothing to do to it");
   assert.ok(labels(p).includes("ATMOS"));
-  assert.match(a.chips.find((c) => c.label === "ATMOS")!.title, /added alongside/i);
 });
 
-test("an Atmos file estimates larger than a replace, because both tracks survive", () => {
-  const atmos = probe({ audio: [audio({ codec: "eac3", channels: 6, bitrate: 768_000, hasAtmos: true })] });
-  const plain = probe({ audio: [audio({ codec: "eac3", channels: 6, bitrate: 768_000, hasAtmos: false })] });
-  assert.ok(assess(atmos).estimatedBytes! > assess(plain).estimatedBytes!);
+test("DTS is still replaced — that is the family that misbehaves", () => {
+  const a = assess(probe({ audio: [audio({ codec: "dts" })] }));
+  assert.equal(a.audioWork, true);
 });
 
 test("Dolby Vision is held back", () => {
