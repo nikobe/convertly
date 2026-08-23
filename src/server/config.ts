@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { resolve, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import type { Root } from "../shared/types.ts";
+import { DEFAULT_ALLOWED_CLIENTS, parseClientRule, AccessRuleError } from "./access.ts";
 
 export interface Config {
   host: string;
@@ -13,6 +14,8 @@ export interface Config {
   scanConcurrency: number;
   videoExtensions: string[];
   dataDir: string;
+  /** Client addresses permitted to reach the API. */
+  allowedClients: string[];
 }
 
 const DEFAULTS = {
@@ -61,7 +64,26 @@ export function loadConfig(path = process.env.CONVERTLY_CONFIG ?? "config/conver
       ? obj.videoExtensions.filter((e): e is string => typeof e === "string").map((e) => e.toLowerCase())
       : DEFAULTS.videoExtensions,
     dataDir: typeof obj.dataDir === "string" ? obj.dataDir : "data",
+    allowedClients: parseAllowedClients(obj.allowedClients),
   };
+}
+
+/**
+ * Validated at load, not at first request: a typo that parsed as "allow
+ * everything" would silently expose an app that can overwrite media.
+ */
+function parseAllowedClients(value: unknown): string[] {
+  const entries = Array.isArray(value)
+    ? value.filter((e): e is string => typeof e === "string")
+    : DEFAULT_ALLOWED_CLIENTS;
+  for (const entry of entries) {
+    try {
+      parseClientRule(entry);
+    } catch (err) {
+      throw new ConfigError(`allowedClients: ${(err as AccessRuleError).message}`);
+    }
+  }
+  return entries.length > 0 ? entries : DEFAULT_ALLOWED_CLIENTS;
 }
 
 function parseRoots(value: unknown, configPath: string): Root[] {

@@ -7,6 +7,7 @@ import { Store } from "./db.ts";
 import { Scanner } from "./scanner.ts";
 import { locate, type Binary } from "./binaries.ts";
 import { registerApi } from "./routes/api.ts";
+import { parseClientRules, isClientAllowed, isExposedHost } from "./access.ts";
 import { JobRunner } from "./jobs.ts";
 import { sweepTempDirs } from "./pipeline.ts";
 import { sweepQuarantine } from "./replace.ts";
@@ -55,6 +56,15 @@ async function main(): Promise<void> {
     bodyLimit: 256 * 1024,
   });
 
+  // Refuse anything that is not on the allowlist before it reaches a route.
+  // There is no password: reachability is the whole of the access control.
+  const clientRules = parseClientRules(config.allowedClients);
+  app.addHook("onRequest", async (request, reply) => {
+    if (isClientAllowed(request.ip, clientRules)) return;
+    request.log.warn({ ip: request.ip, url: request.url }, "refused a client outside allowedClients");
+    return reply.code(403).send({ error: "Not permitted from this address." });
+  });
+
   await registerApi(app, { config, store, scanner, ffprobe, ffmpeg, jobs });
 
   // Built UI, when it exists. In development Vite serves it on its own port
@@ -79,6 +89,10 @@ async function main(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`ffprobe ${ffprobe.version} (${ffprobe.source})`);
   app.log.info(`roots: ${config.roots.map((r) => r.label).join(", ")}`);
+  app.log.info(`reachable from: ${config.allowedClients.join(", ")}`);
+  if (isExposedHost(config.host) && config.allowedClients.includes("*")) {
+    app.log.warn("bound beyond this machine with allowedClients ['*'] — anything that can reach the port can re-encode your media");
+  }
   if (sweptTemp.length > 0) app.log.info(`cleared ${sweptTemp.length} temp dir(s) left by a previous run`);
   if (sweptQuarantine.removed.length > 0) {
     app.log.info(`quarantine sweep freed ${(sweptQuarantine.freedBytes / 1e9).toFixed(2)} GB`);

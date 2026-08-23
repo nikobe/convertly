@@ -44,6 +44,15 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
       })(),
     ];
 
+    checks.push({
+      id: "access",
+      label: "Reachable from",
+      ok: !config.allowedClients.includes("*"),
+      detail: config.allowedClients.includes("*")
+        ? `Any address (${config.host}:${config.port}) — no restriction`
+        : `${config.host}:${config.port} · ${config.allowedClients.join(", ")}`,
+    });
+
     for (const root of config.roots) {
       const mounted = existsSync(root.path);
       checks.push({

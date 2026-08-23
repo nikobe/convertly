@@ -130,6 +130,13 @@ properties, enums, or namespaces in server code; `erasableSyntaxOnly` is on so
 - `src/server/` — Fastify API, `node:sqlite` store, ffprobe scanner
 - `src/web/` — React + Vite UI, built to `dist/web` and served by Fastify
 
+There is **no authentication**. Reachability is the access control: an
+`onRequest` hook rejects any client outside `allowedClients`, which defaults
+to loopback plus `100.64.0.0/10` — the range Tailscale assigns. That makes the
+app usable over a tailnet without handing the local network a button that
+re-encodes media in place. Rules are validated at config load, because a typo
+parsing as "allow everything" is the dangerous failure.
+
 `paths.ts` is the security boundary: every client-supplied path goes through
 `resolveWithinRoots`, which canonicalises through realpath before checking, so
 a symlink inside a root cannot be used to escape it. Nothing should touch the
