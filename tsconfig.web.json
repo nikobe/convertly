@@ -24,5 +24,9 @@
     "src/web/**/*.ts",
     "src/web/**/*.tsx",
     "src/shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }

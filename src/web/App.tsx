@@ -4,6 +4,7 @@ import { api } from "./api.ts";
 import { bytes, duration } from "./format.ts";
 import { TrackPanel } from "./TrackPanel.tsx";
 import { JobPanel } from "./JobPanel.tsx";
+import { FileName } from "./FileName.tsx";
 import type { Job } from "../shared/job.ts";
 import { planFor, estimateBytes, keepEverything, type Selection } from "../shared/estimate.ts";
 
@@ -442,7 +443,7 @@ function Row({
       <tr className="clickable">
         <td className="pick" />
         <td className="name" colSpan={6}>
-          <button className="dir" onClick={onOpen}>▸ {entry.name}</button>
+          <button className="dir" onClick={onOpen} title={entry.name}>▸ <FileName name={entry.name} /></button>
         </td>
       </tr>
     );
@@ -452,7 +453,7 @@ function Row({
     return (
       <tr className="idle">
         <td className="pick" />
-        <td className="name">{entry.name}</td>
+        <td className="name" title={entry.name}><FileName name={entry.name} /></td>
         <td colSpan={5} />
       </tr>
     );
@@ -489,10 +490,10 @@ function Row({
               title={trimmable ? "Show tracks" : "Show details"}
             >
               <span className="caret">{expanded ? "▾" : "▸"}</span>
-              {entry.name}
+              <FileName name={entry.name} />
             </button>
           ) : (
-            entry.name
+            <FileName name={entry.name} />
           )}
         </td>
         <td className="chips">

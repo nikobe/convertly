@@ -1,5 +1,6 @@
 import type { Job } from "../shared/job.ts";
 import { bytes } from "./format.ts";
+import { FileName } from "./FileName.tsx";
 
 function clock(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds)) return "—";
@@ -26,7 +27,7 @@ export function JobPanel({
     <section className={`job job-${job.state}`} aria-live="polite">
       <div className="jhead">
         <span className={`jstate ${job.state}`}>{stateLabel(job.state)}</span>
-        <span className="jname" title={job.path}>{job.name}</span>
+        <span className="jname" title={job.path}><FileName name={job.name} tailLength={22} /></span>
         <span className="spacer" />
         {running && <button className="jbtn" onClick={onCancel}>Cancel</button>}
         {!running && <button className="jbtn quiet" onClick={onDismiss}>Dismiss</button>}

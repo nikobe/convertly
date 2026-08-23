@@ -126,12 +126,12 @@ button:disabled { cursor: not-allowed; }
 
 table { border-collapse: collapse; width: 100%; table-layout: fixed; min-width: 56rem; }
 col.c-pick   { width: 2rem; }
-col.c-chips  { width: 22rem; }
+col.c-chips  { width: 18rem; }
 col.c-len    { width: 5rem; }
 col.c-size   { width: 5.5rem; }
 col.c-after  { width: 5.5rem; }
 col.c-saves  { width: 5.5rem; }
-@media (max-width: 70rem) { col.c-chips { width: 16rem; } }
+@media (max-width: 80rem) { col.c-chips { width: 14rem; } }
 
 /* The rail gives way before the listing does — the filenames are the point. */
 @media (max-width: 64rem) { :root { --rail-w: 11rem; } }
@@ -249,7 +249,11 @@ tr.detail:hover { background: var(--panel); }
   letter-spacing: 0.12em; text-transform: uppercase;
 }
 .tactions button:hover { border-color: var(--amber); color: var(--amber); }
-.tactions .spacer { flex: 1; }
+.tactions .tdivider { width: 1px; align-self: stretch; background: var(--rule); margin: 0 0.2rem; }
+
+/* The panel tracks the viewport rather than the table's min-width, so its
+   controls stay reachable without scrolling sideways. */
+.tracks { position: sticky; left: 0; width: min(100%, calc(100vw - var(--rail-w) - 2rem)); }
 
 .foot .trimmed { color: var(--amber-dim); }
 
@@ -333,3 +337,20 @@ thead th.pick { text-align: center; }
 .tactions button.convert { border-color: var(--amber); color: var(--amber); }
 .tactions button.convert:hover:not(:disabled) { background: var(--amber); color: var(--ground); }
 .tactions button.convert:disabled { border-color: var(--rule); color: var(--text-faint); }
+
+/* ── filenames truncate in the middle, not at the end ──── */
+
+.fname { display: inline-flex; min-width: 0; max-width: 100%; vertical-align: bottom; }
+.fname .fhead { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* The tail is what tells two similar files apart, so it never gets cut. */
+.fname .ftail { flex: none; white-space: pre; }
+
+td.name button.expander { min-width: 0; }
+td.name button.expander .fname { flex: 1; }
+.jname { display: flex; min-width: 0; }
+
+.tfullname {
+  margin: 0; padding: 0 0.4rem 0.2rem;
+  color: var(--amber-hi); font-size: 12px;
+  overflow-wrap: anywhere;
+}

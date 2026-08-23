@@ -66,6 +66,8 @@ export function TrackPanel({ entry, selection, onChange, selectedCount, isSelect
 
   return (
     <div className="tracks">
+      <p className="tfullname" title={entry.path}>{entry.name}</p>
+
       <div className="tgroup">
         <h3>Video</h3>
         {probe.video ? (
@@ -121,6 +123,16 @@ export function TrackPanel({ entry, selection, onChange, selectedCount, isSelect
       )}
 
       <div className="tactions">
+        {/* The primary action leads: right-aligning it put it off-screen on a
+            narrow window, because the table sets a min-width. */}
+        {canConvert ? (
+          <button className="convert" onClick={() => onConvert(selection)} disabled={busy}>
+            {busy ? "A job is running" : "Encode and check"}
+          </button>
+        ) : (
+          <span className="tnote">Nothing to do on this file.</span>
+        )}
+        <span className="tdivider" aria-hidden="true" />
         <button onClick={keepAll}>Keep everything</button>
         {hasForeign && <button onClick={keepPreferred}>Keep English only</button>}
         <button onClick={keepPrimaryOnly}>Keep one audio track</button>
@@ -128,14 +140,6 @@ export function TrackPanel({ entry, selection, onChange, selectedCount, isSelect
           <button className="apply" onClick={() => onApplyToSelection(selection)}>
             Apply to {selectedCount - 1} other selected
           </button>
-        )}
-        <span className="spacer" />
-        {canConvert ? (
-          <button className="convert" onClick={() => onConvert(selection)} disabled={busy}>
-            {busy ? "A job is running" : "Encode and check"}
-          </button>
-        ) : (
-          <span className="tnote">Nothing to do on this file.</span>
         )}
       </div>
     </div>
