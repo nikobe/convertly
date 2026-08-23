@@ -1,14 +1,7 @@
 {
-  "host": "0.0.0.0",
-  "port": 8973,
   "roots": [
     { "id": "media1", "label": "Movies",    "path": "/Volumes/Media-1/Movies" },
     { "id": "media2", "label": "4K Movies", "path": "/Volumes/Media-2/Movies 4K" },
     { "id": "media3", "label": "TV",        "path": "/Volumes/Media-3/TV" }
-  ],
-  "allowedClients": ["127.0.0.1", "::1", "100.64.0.0/10"],
-  "ffprobePath": null,
-  "ffmpegPath": null,
-  "scanConcurrency": 4,
-  "videoExtensions": [".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".mpg", ".mpeg", ".divx"]
+  ]
 }

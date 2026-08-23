@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseClientRules, isClientAllowed, parseClientRule, normaliseIp,
-  isExposedHost, DEFAULT_ALLOWED_CLIENTS, AccessRuleError,
+  isExposedHost, reachableUrls, DEFAULT_ALLOWED_CLIENTS, AccessRuleError,
 } from "./access.ts";
 
 const defaults = parseClientRules(DEFAULT_ALLOWED_CLIENTS);
@@ -73,4 +73,29 @@ test("isExposedHost knows when the bind reaches beyond this machine", () => {
   assert.equal(isExposedHost("localhost"), false);
   assert.equal(isExposedHost("0.0.0.0"), true);
   assert.equal(isExposedHost("100.71.126.16"), true);
+});
+
+test("the built-in defaults are reachable but not open", () => {
+  // These two settings only make sense together: binding every interface is
+  // the default because the allowlist is what makes it safe. If either side
+  // is ever loosened alone, this fails.
+  assert.deepEqual(DEFAULT_ALLOWED_CLIENTS, ["127.0.0.1", "::1", "100.64.0.0/10"]);
+  assert.equal(DEFAULT_ALLOWED_CLIENTS.includes("*"), false, "a broad bind with a wildcard allowlist is wide open");
+  const rules = parseClientRules(DEFAULT_ALLOWED_CLIENTS);
+  assert.equal(isClientAllowed("100.71.126.16", rules), true, "tailnet must work with no config");
+  assert.equal(isClientAllowed("192.168.0.197", rules), false, "the LAN must not");
+});
+
+test("reachableUrls names the tailnet address so it need not be looked up", () => {
+  const fake = {
+    lo0: [{ family: "IPv4", internal: true, address: "127.0.0.1" }],
+    en0: [{ family: "IPv4", internal: false, address: "192.168.0.197" }],
+    utun4: [{ family: "IPv4", internal: false, address: "100.71.126.16" }],
+    en1: [{ family: "IPv6", internal: false, address: "fe80::1" }],
+  } as unknown as Parameters<typeof reachableUrls>[1];
+  const urls = reachableUrls(8973, fake);
+  assert.ok(urls.includes("http://localhost:8973/"));
+  assert.ok(urls.some((u) => u.startsWith("http://100.71.126.16:8973/") && u.includes("tailnet")));
+  assert.ok(urls.some((u) => u.startsWith("http://192.168.0.197:8973/") && !u.includes("tailnet")));
+  assert.equal(urls.some((u) => u.includes("fe80")), false, "IPv6 link-local is noise");
 });

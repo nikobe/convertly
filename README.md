@@ -39,20 +39,26 @@ server on port 5273, proxying `/api` to the API.
 
 ## Reaching it from another machine
 
-There is no password. The app can overwrite and delete media, so reachability
-*is* the access control, and the default allowlist reflects that:
+Nothing to configure. On start it prints where it can be reached:
 
-```json
-{ "host": "0.0.0.0", "allowedClients": ["127.0.0.1", "::1", "100.64.0.0/10"] }
+```
+open http://localhost:8973/
+open http://100.71.126.16:8973/ (tailnet)
+accepting: 127.0.0.1, ::1, 100.64.0.0/10
 ```
 
-That binds every interface but only accepts the machine itself and the
-`100.64.0.0/10` range, which is what Tailscale assigns. So a tailnet device
-can use it and the local network cannot. Anything you browse is the *server's*
-filesystem, so you are always looking at the host's drives — bookmarks live in
-the server's database and follow you between devices.
+There is no password. The app can overwrite and delete media, so reachability
+*is* the access control: it binds every interface, but only accepts this
+machine and `100.64.0.0/10` — the range Tailscale assigns. A tailnet device
+can use it; the local network gets 403.
 
-To allow a specific machine as well, add its address: `"192.168.1.20"`.
+To allow something else, list it: `"allowedClients": ["127.0.0.1", "::1",
+"100.64.0.0/10", "192.168.1.20"]`. `"*"` turns the check off, and the health
+strip shows red when it is.
+
+What you browse is always the *server's* filesystem, so from anywhere you are
+looking at the host's drives. Bookmarks live in the server's database, so they
+follow you between devices.
 
 `roots` is a hard boundary, not a convenience: every path the client asks for
 is canonicalised and checked against it, so the app cannot read or write

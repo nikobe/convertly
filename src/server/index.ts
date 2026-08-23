@@ -7,7 +7,7 @@ import { Store } from "./db.ts";
 import { Scanner } from "./scanner.ts";
 import { locate, type Binary } from "./binaries.ts";
 import { registerApi } from "./routes/api.ts";
-import { parseClientRules, isClientAllowed, isExposedHost } from "./access.ts";
+import { parseClientRules, isClientAllowed, isExposedHost, reachableUrls } from "./access.ts";
 import { JobRunner } from "./jobs.ts";
 import { sweepTempDirs } from "./pipeline.ts";
 import { sweepQuarantine } from "./replace.ts";
@@ -89,7 +89,8 @@ async function main(): Promise<void> {
   await app.listen({ host: config.host, port: config.port });
   app.log.info(`ffprobe ${ffprobe.version} (${ffprobe.source})`);
   app.log.info(`roots: ${config.roots.map((r) => r.label).join(", ")}`);
-  app.log.info(`reachable from: ${config.allowedClients.join(", ")}`);
+  for (const url of reachableUrls(config.port)) app.log.info(`open ${url}`);
+  app.log.info(`accepting: ${config.allowedClients.join(", ")}`);
   if (isExposedHost(config.host) && config.allowedClients.includes("*")) {
     app.log.warn("bound beyond this machine with allowedClients ['*'] — anything that can reach the port can re-encode your media");
   }

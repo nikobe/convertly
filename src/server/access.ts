@@ -10,6 +10,8 @@
  * network does not.
  */
 
+import { networkInterfaces } from "node:os";
+
 export interface ClientRule {
   /** Printable form, for the health check and logs. */
   text: string;
@@ -77,6 +79,23 @@ export function parseClientRules(entries: string[]): ClientRule[] {
 
 export function isClientAllowed(ip: string, rules: ClientRule[]): boolean {
   return rules.some((rule) => rule.matches(ip));
+}
+
+/**
+ * URLs this machine can actually be reached on, so the log says where to go
+ * rather than leaving you to find the tailnet address yourself.
+ */
+export function reachableUrls(port: number, interfaces = networkInterfaces()): string[] {
+  const urls = [`http://localhost:${port}/`];
+  const tailnet = parseClientRule("100.64.0.0/10");
+  for (const addresses of Object.values(interfaces)) {
+    for (const address of addresses ?? []) {
+      if (address.family !== "IPv4" || address.internal) continue;
+      const label = tailnet.matches(address.address) ? " (tailnet)" : "";
+      urls.push(`http://${address.address}:${port}/${label}`);
+    }
+  }
+  return urls;
 }
 
 /** True when the bind address exposes the app beyond this machine. */

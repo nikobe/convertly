@@ -19,7 +19,10 @@ export interface Config {
 }
 
 const DEFAULTS = {
-  host: "127.0.0.1",
+  // Bind everywhere by default: `allowedClients` is what makes that safe, and
+  // the two only make sense together. Loopback-only would mean editing config
+  // before the app could be used from anywhere but the machine it runs on.
+  host: "0.0.0.0",
   port: 8973,
   scanConcurrency: 4,
   videoExtensions: [".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".mpg", ".mpeg", ".divx"],
