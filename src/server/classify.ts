@@ -1,12 +1,12 @@
 import type { Probe, Assessment, Chip, AudioTrack, Conversion } from "../shared/types.ts";
 import {
   AUDIO_REPLACE, EFFICIENT_VIDEO, PREFERRED_LANGUAGES,
-  planFor, primaryAudio, estimateBytes, keepEverything, subtitleBitrate,
+  planFor, primaryAudio, estimateBytes, keepEverything, subtitleBitrate, resolutionClass,
   type Selection,
 } from "../shared/estimate.ts";
 
 export { primaryAudio, estimateBytes, planFor };
-export { AC3_BITRATE, HARDWARE_MIN_HEIGHT, bitsPerPixel } from "../shared/estimate.ts";
+export { AC3_BITRATE, bitsPerPixel, resolutionClass, usesHardware } from "../shared/estimate.ts";
 
 /** Above this, the extra language tracks are worth surfacing as removable. */
 const MANY_AUDIO_TRACKS = 3;
@@ -67,8 +67,14 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
     chips.push({ label: "BLOATED", tone: "warn", title: `${plan.bitsPerPixel!.toFixed(3)} bits per pixel — an efficient codec, but encoded at a far higher bitrate than it needs.` });
   }
 
-  const resolution = resolutionLabel(video.height);
-  if (resolution) chips.push({ label: resolution, tone: "note", title: `${video.width}×${video.height}` });
+  const resolution = resolutionClass(video.width, video.height).toUpperCase();
+  chips.push({
+    label: resolution,
+    tone: "note",
+    title:
+      `${video.width}×${video.height}` +
+      (video.height < video.width / 1.9 ? " — letterboxed, so it is shorter than the tier name suggests." : ""),
+  });
   if (video.bitDepth && video.bitDepth >= 10) {
     chips.push({ label: `${video.bitDepth}BIT`, tone: "note", title: `${video.bitDepth}-bit video.` });
   }
@@ -179,12 +185,6 @@ export function codecLabel(codec: string): string {
   return named[codec] ?? (codec.startsWith("pcm") ? "PCM" : codec.toUpperCase());
 }
 
-function resolutionLabel(height: number): string | null {
-  if (height >= 2000) return "4K";
-  if (height >= 1000) return "1080P";
-  if (height >= 700) return "720P";
-  if (height > 0) return "SD";
-  return null;
-}
+
 
 export { PREFERRED_LANGUAGES };

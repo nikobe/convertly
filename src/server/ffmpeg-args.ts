@@ -1,7 +1,7 @@
 import type { Probe, AudioTrack } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
 import {
-  HARDWARE_MIN_HEIGHT, MAX_CHANNELS, ac3BitrateFor, outputChannels,
+  MAX_CHANNELS, ac3BitrateFor, outputChannels, usesHardware,
   primaryAudio, planFor, shouldReplaceAudio,
   type Selection,
 } from "../shared/estimate.ts";
@@ -53,7 +53,7 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   const policy = preset.audioPolicy;
   const primary = keptAudio[0];
   const height = probe.video.height;
-  const encoder = chooseEncoder(plan.videoWork, height, preset);
+  const encoder = chooseEncoder(plan.videoWork, probe.video.width, height, preset);
 
   const args: string[] = [
     "-hide_banner",
@@ -206,11 +206,11 @@ function orderedAudio(probe: Probe, selection: Selection): AudioTrack[] {
   return [primary, ...kept.filter((t) => t.index !== primary.index)];
 }
 
-function chooseEncoder(videoWork: boolean, height: number, preset: Preset): BuiltCommand["encoder"] {
+function chooseEncoder(videoWork: boolean, width: number, height: number, preset: Preset): BuiltCommand["encoder"] {
   if (preset.forceEncoder) return preset.forceEncoder;
   // A resolution cap means re-encoding even if the codec is already fine.
   if (!videoWork && preset.maxHeight === null) return "copy";
-  return height >= HARDWARE_MIN_HEIGHT ? "hevc_videotoolbox" : "libx265";
+  return usesHardware(width, height) ? "hevc_videotoolbox" : "libx265";
 }
 
 /**
@@ -248,9 +248,9 @@ export function hardwareBitrate(probe: Probe, preset: Preset): number {
   const derived = Math.round(source * ratio * 1.3);
 
   // Floors and ceilings by resolution, so a bad probe cannot produce nonsense.
-  const height = probe.video?.height ?? 1080;
-  const floor = height >= HARDWARE_MIN_HEIGHT ? 8_000_000 : 2_000_000;
-  const ceiling = height >= HARDWARE_MIN_HEIGHT ? 40_000_000 : 12_000_000;
+  const uhd = usesHardware(probe.video?.width ?? 1920, probe.video?.height ?? 1080);
+  const floor = uhd ? 8_000_000 : 2_000_000;
+  const ceiling = uhd ? 40_000_000 : 12_000_000;
   const clamped = Math.min(Math.max(derived, floor), ceiling);
 
   // CRF is inverted relative to bitrate: a lower CRF asks for more bits.

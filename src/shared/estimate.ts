@@ -55,8 +55,28 @@ export function outputChannels(channels: number): number {
   return Math.min(Math.max(channels, 1), MAX_CHANNELS);
 }
 
+export type ResolutionClass = "SD" | "720p" | "1080p" | "4K";
+
+/**
+ * Which resolution tier a frame belongs to.
+ *
+ * Height alone is wrong: film is letterboxed, so a 1080p scope transfer is
+ * 1920x800 and a 2:1 one is 1920x960. Judging by height called those 720p,
+ * and — far worse — would have routed a 4K scope master to software x265,
+ * which is a ten-hour job on the target host. Width is the reliable signal, with
+ * height as a fallback for anything unusually tall.
+ */
+export function resolutionClass(width: number, height: number): ResolutionClass {
+  if (width >= 3000 || height >= 1700) return "4K";
+  if (width >= 1700 || height >= 900) return "1080p";
+  if (width >= 1100 || height >= 620) return "720p";
+  return "SD";
+}
+
 /** Hardware encoding takes over at 4K, where software x265 is not viable. */
-export const HARDWARE_MIN_HEIGHT = 1440;
+export function usesHardware(width: number, height: number): boolean {
+  return resolutionClass(width, height) === "4K";
+}
 
 /** Bits per pixel above which an already-efficient file is still bloated. */
 export const BLOATED_BPP = 0.12;
@@ -165,7 +185,7 @@ export function planFor(probe: Probe): Plan {
     audioPolicy: "replace",
     atmos,
     audioWork,
-    encoder: videoWork ? (video.height >= HARDWARE_MIN_HEIGHT ? "hevc_videotoolbox" : "libx265") : null,
+    encoder: videoWork ? (usesHardware(video.width, video.height) ? "hevc_videotoolbox" : "libx265") : null,
     replaceRatio,
     bloated,
     bitsPerPixel: bpp,

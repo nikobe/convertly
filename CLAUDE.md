@@ -35,6 +35,11 @@ Consequences worth stating plainly, because each was got wrong once:
 preset medium, 10-bit). 2160p uses `hevc_videotoolbox` (10-bit). This is a
 measurement, not a preference — see "Host" below.
 
+The split goes through `resolutionClass(width, height)`, which keys on
+**width**. Film is letterboxed: a 2:1 1080p transfer is 1920×960 and a scope
+one is 1920×800. Judging by height labelled those 720p, and would have routed
+a letterboxed 4K master to software x265 — a ten-hour job on the target host.
+
 **Concurrency: exactly 1.** Measured, not assumed: two parallel hardware jobs
 aggregate 82 fps against 91 fps for one. There is a single media engine, and
 software x265 already saturates all six cores.

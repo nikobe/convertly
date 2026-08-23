@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assess, bitsPerPixel, primaryAudio, AC3_BITRATE, HARDWARE_MIN_HEIGHT } from "./classify.ts";
+import { assess, bitsPerPixel, primaryAudio, AC3_BITRATE, resolutionClass, usesHardware } from "./classify.ts";
 import { planFor, estimateBytes, keepEverything } from "../shared/estimate.ts";
 import type { Probe, AudioTrack } from "../shared/types.ts";
 
@@ -46,7 +46,6 @@ test("encoder splits on resolution at the 4K boundary", () => {
     video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60_000_000, hdr: null, colorTransfer: null },
   }));
   assert.equal(uhd.encoder, "hevc_videotoolbox");
-  assert.ok(2160 >= HARDWARE_MIN_HEIGHT);
 });
 
 test("hardware encodes are estimated larger than software for the same ratio", () => {
@@ -222,4 +221,34 @@ test("10-bit alone is not HDR", () => {
     audio: [audio({ codec: "eac3" })],
   });
   assert.ok(!assess(p).chips.some((c) => c.label === "HDR10"), "every file we output is 10-bit; none of them are HDR");
+});
+
+test("letterboxed film is judged by width, not height", () => {
+  // 1920x960 is a 2:1 crop of a 1080p master. Judging by height called it 720p.
+  assert.equal(resolutionClass(1920, 960), "1080p");
+  assert.equal(resolutionClass(1920, 800), "1080p", "2.40:1 scope");
+  assert.equal(resolutionClass(1920, 1080), "1080p");
+  assert.equal(resolutionClass(1280, 720), "720p");
+  assert.equal(resolutionClass(1024, 576), "SD");
+  assert.equal(resolutionClass(720, 480), "SD");
+  assert.equal(resolutionClass(3840, 2160), "4K");
+  assert.equal(resolutionClass(3840, 1600), "4K", "4K scope");
+});
+
+test("a letterboxed 4K master still goes to hardware", () => {
+  // The dangerous half of the same bug: judged by height, a 3840x1400 scope
+  // master would have gone to software x265 — a ten-hour job on the target host.
+  assert.equal(usesHardware(3840, 1400), true);
+  assert.equal(usesHardware(3840, 2160), true);
+  assert.equal(usesHardware(1920, 1080), false);
+  assert.equal(usesHardware(1920, 960), false);
+});
+
+test("the 2:1 test file reports 1080P, not 720P", () => {
+  const p = probe({
+    video: { index: 0, codec: "h264", width: 1920, height: 960, pixFmt: "yuv420p", bitDepth: 8, fps: 23.976, bitrate: 9_300_000, hdr: null, colorTransfer: null },
+  });
+  const a = assess(p);
+  assert.ok(a.chips.some((c) => c.label === "1080P"), a.chips.map((c) => c.label).join(" "));
+  assert.equal(a.encoder, "libx265");
 });

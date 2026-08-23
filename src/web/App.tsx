@@ -379,23 +379,46 @@ function Hud({
   dirty: boolean;
   onOpenQuality: () => void;
 }) {
+  const [showHealth, setShowHealth] = useState(false);
+  const problems = health?.checks.filter((c) => !c.ok) ?? [];
+  const ok = health !== null && problems.length === 0;
+
   return (
     <header className="hud">
       <span className="brand">Convertly</span>
-      <span className="health">
-        {health?.checks.map((check) => (
-          <span className="hcheck" key={check.id} title={check.detail}>
-            <span className={`dot${check.ok ? "" : " bad"}`} />
-            {check.label}
-          </span>
-        ))}
-      </span>
+
+      {/* One summary rather than a chip per check. Eight of them crowded out
+          the controls and told you nothing you needed at a glance. */}
+      <button
+        className={`hstatus${ok ? "" : " bad"}`}
+        onClick={() => setShowHealth((v) => !v)}
+        aria-expanded={showHealth}
+        title={ok ? "Everything reachable" : problems.map((p) => `${p.label}: ${p.detail}`).join("\n")}
+      >
+        <span className={`dot${ok ? "" : " bad"}`} />
+        {health === null ? "Checking" : ok ? "All good" : `${problems.length} problem${problems.length === 1 ? "" : "s"}`}
+      </button>
+
+      {showHealth && health && (
+        <div className="hpanel" role="status">
+          {health.checks.map((check) => (
+            <div className={`hrow${check.ok ? "" : " bad"}`} key={check.id}>
+              <span className={`dot${check.ok ? "" : " bad"}`} />
+              <span className="hl">{check.label}</span>
+              <span className="hd">{check.detail}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <span className="spacer" />
       <button className="qopen" onClick={onOpenQuality} title="Quality settings for the next encode">
-        Quality: CRF {preset.crf} · {preset.x265Preset}
-        {preset.maxHeight ? ` · ${preset.maxHeight}p cap` : ""}
-        {dirty ? " ·" : ""}
-        {dirty && <span className="dirty" aria-label="unsaved">unsaved</span>}
+        <span className="qlabel">Quality</span>
+        <span className="qvalue">
+          CRF {preset.crf}
+          <span className="qextra"> · {preset.x265Preset}{preset.maxHeight ? ` · ${preset.maxHeight}p` : ""}</span>
+        </span>
+        {dirty && <span className="dirty" aria-label="unsaved">•</span>}
       </button>
     </header>
   );
