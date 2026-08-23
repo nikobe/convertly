@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { statSync, existsSync } from "node:fs";
+import { statSync, existsSync, readdirSync } from "node:fs";
 import { basename } from "node:path";
 import type { Config } from "../config.ts";
 import type { Store } from "../db.ts";
+import { UnreadableError } from "../scanner.ts";
 import type { Scanner } from "../scanner.ts";
 import type { Binary } from "../binaries.ts";
 import { resolveWithinRoots, PathNotAllowedError } from "../paths.ts";
@@ -76,13 +77,7 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     }
 
     for (const root of config.roots) {
-      const mounted = existsSync(root.path);
-      checks.push({
-        id: `root:${root.id}`,
-        label: root.label,
-        ok: mounted,
-        detail: mounted ? root.path : `Not mounted: ${root.path}`,
-      });
+      checks.push({ id: `root:${root.id}`, label: root.label, ...readableRoot(root.path) });
     }
 
     return { ok: checks.every((c) => c.ok), checks };
@@ -112,7 +107,12 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
       return reply.code(400).send({ error: "That path is a file, not a folder." });
     }
 
-    return scanner.browse(resolved.path, resolved.root);
+    try {
+      return await scanner.browse(resolved.path, resolved.root);
+    } catch (err) {
+      if (err instanceof UnreadableError) return reply.code(403).send({ error: err.message });
+      throw err;
+    }
   });
 
   app.get("/api/bookmarks", async () => store.listBookmarks());
@@ -266,4 +266,32 @@ function validatePreset(preset: Preset): string | null {
     return "Unsupported AC3 bitrate.";
   }
   return null;
+}
+
+/**
+ * Can we actually read this root?
+ *
+ * existsSync is not enough. On macOS a volume can be mounted and stattable
+ * while every readdir is refused by the privacy system, which had the health
+ * strip reporting seven green roots on a machine that could not list one of
+ * them.
+ */
+function readableRoot(path: string): { ok: boolean; detail: string } {
+  if (!existsSync(path)) return { ok: false, detail: `Not mounted: ${path}` };
+  try {
+    const entries = readdirSync(path);
+    return { ok: true, detail: `${path} · ${entries.length} item${entries.length === 1 ? "" : "s"}` };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "EACCES") {
+      return {
+        ok: false,
+        detail:
+          `Mounted but not readable — macOS is blocking it. Give Full Disk Access to whatever ` +
+          `starts the server (Terminal, or sshd for remote deploys) in System Settings › ` +
+          `Privacy & Security, then restart it. Path: ${path}`,
+      };
+    }
+    return { ok: false, detail: `Unreadable (${code ?? "unknown"}): ${path}` };
+  }
 }

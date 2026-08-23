@@ -7,6 +7,13 @@ import { assess } from "./classify.ts";
 import { isWithin } from "./paths.ts";
 import type { DirEntry, BrowseResponse, Root } from "../shared/types.ts";
 
+export class UnreadableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnreadableError";
+  }
+}
+
 /** Directories that are ours or the OS's, never the user's media. */
 const SKIP_DIRS = new Set([".convertly-tmp", "quarantine", ".Trashes", ".Spotlight-V100", "@eaDir"]);
 
@@ -31,7 +38,22 @@ export class Scanner {
    * a folder of 400 files does not fork 400 ffprobes at once.
    */
   async browse(path: string, root: Root): Promise<BrowseResponse> {
-    const names = readdirSync(path);
+    let names: string[];
+    try {
+      names = readdirSync(path);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "EACCES") {
+        // Mounted but blocked by macOS privacy controls. A raw EPERM 500 sends
+        // people looking at permissions on the folder, which are fine.
+        throw new UnreadableError(
+          "macOS is blocking access to this folder. Give Full Disk Access to whatever starts " +
+            "the server — Terminal, or sshd if you deploy over SSH — in System Settings › " +
+            "Privacy & Security, then restart it.",
+        );
+      }
+      throw err;
+    }
     const entries: DirEntry[] = [];
     const toProbe: DirEntry[] = [];
 
