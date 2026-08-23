@@ -28,7 +28,7 @@ export const DEFAULT_GOVERNORS: GovernorConfig = {
   // Enough that a drive is never driven to completely full, which upsets the
   // OS and any media server on it — not so much that a small file is blocked
   // on a drive with plenty of room for it.
-  disk: { enabled: true, headroomBytes: 5 * 1024 * 1024 * 1024 },
+  disk: { enabled: true, headroomBytes: 6 * 1024 * 1024 * 1024 },
 };
 
 export interface GovernorVerdict {
