@@ -81,21 +81,26 @@ export function buildCommand(input: BuildInput): BuiltCommand {
     args.push("-c:v", "copy");
     notes.push("Video stream copied — already an efficient codec at a sane bitrate.");
   } else if (encoder === "libx265") {
+    const { gop, min } = keyframeInterval(probe.video.fps);
     args.push(
       "-c:v", "libx265",
       "-crf", String(preset.crf),
       "-preset", preset.x265Preset,
       "-pix_fmt", preset.tenBit ? "yuv420p10le" : "yuv420p",
+      "-g", String(gop),
+      "-keyint_min", String(min),
       // Keep x265's own logging out of the progress stream.
       "-x265-params", "log-level=error",
     );
   } else {
     targetVideoBitrate = hardwareBitrate(probe, preset);
+    const { gop } = keyframeInterval(probe.video.fps);
     args.push(
       "-c:v", "hevc_videotoolbox",
       // This ffmpeg build rejects "5M". Integers only.
       "-b:v", String(targetVideoBitrate),
       "-pix_fmt", preset.tenBit ? "p010le" : "nv12",
+      "-g", String(gop),
     );
     if (preset.tenBit) args.push("-profile:v", "main10");
     notes.push(
@@ -206,6 +211,27 @@ function chooseEncoder(videoWork: boolean, height: number, preset: Preset): Buil
   // A resolution cap means re-encoding even if the codec is already fine.
   if (!videoWork && preset.maxHeight === null) return "copy";
   return height >= HARDWARE_MIN_HEIGHT ? "hevc_videotoolbox" : "libx265";
+}
+
+/**
+ * Seconds between forced keyframes.
+ *
+ * x265's default is 250 frames plus scene detection, which on a 24fps source
+ * produced gaps of up to 20 seconds against the source's steady 2. That makes
+ * scrubbing coarse in Plex and forces Jellyfin to re-encode when it segments
+ * for a client, because segment boundaries stop landing on keyframes.
+ *
+ * Five seconds costs a percent or two of bitrate and keeps both usable.
+ */
+export const KEYFRAME_INTERVAL_SEC = 5;
+
+/** Forced-keyframe spacing in frames, derived from the source frame rate. */
+export function keyframeInterval(fps: number | null): { gop: number; min: number } {
+  const rate = fps && Number.isFinite(fps) && fps > 0 ? fps : 24;
+  return {
+    gop: Math.max(24, Math.round(rate * KEYFRAME_INTERVAL_SEC)),
+    min: Math.max(12, Math.round(rate)),
+  };
 }
 
 /**

@@ -244,3 +244,29 @@ test("every AC3 bitrate emitted is a plain integer", () => {
     assert.match(bitrate, /^\d+$/, `channels=${channels} produced ${bitrate}`);
   }
 });
+
+test("a keyframe interval is always forced", () => {
+  // x265's default of 250 frames plus scene detection gave gaps of up to 20s
+  // against a source's steady 2s, wrecking seeking and Jellyfin segmenting.
+  const { args } = build(probe());
+  assert.equal(arg(args, "-g"), "120", "24fps x 5s");
+  assert.equal(arg(args, "-keyint_min"), "24");
+});
+
+test("the keyframe interval follows the source frame rate", () => {
+  const p = probe({ video: { index: 0, codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", bitDepth: 8, fps: 50, bitrate: 25e6, hdr: null, colorTransfer: null } });
+  assert.equal(arg(build(p).args, "-g"), "250", "50fps x 5s");
+});
+
+test("a missing frame rate falls back rather than producing nonsense", () => {
+  const p = probe({ video: { index: 0, codec: "h264", width: 1920, height: 1080, pixFmt: "yuv420p", bitDepth: 8, fps: null, bitrate: 25e6, hdr: null, colorTransfer: null } });
+  const g = Number(arg(build(p).args, "-g"));
+  assert.ok(Number.isInteger(g) && g >= 24 && g <= 300, `got ${g}`);
+});
+
+test("the hardware path forces keyframes too", () => {
+  const p = probe({ video: { index: 0, codec: "h264", width: 3840, height: 2160, pixFmt: "yuv420p", bitDepth: 8, fps: 24, bitrate: 60e6, hdr: null, colorTransfer: null } });
+  const { args, encoder } = build(p);
+  assert.equal(encoder, "hevc_videotoolbox");
+  assert.equal(arg(args, "-g"), "120");
+});

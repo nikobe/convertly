@@ -195,6 +195,11 @@ outcome keeps the encode so accepting it later costs no re-encode.
 - `ffmpeg-args.ts` is pure — the entire policy is testable without encoding a
   frame. It is also where the integer-bitrate rule lives, with a test that
   fails if any SI-suffixed number could ever reach ffmpeg.
+- **Keyframes are forced every 5 seconds** (`-g` from the source frame rate).
+  x265's default of 250 frames plus scene detection turned a source's steady
+  2-second cadence into irregular gaps of up to 20 seconds. That makes Plex
+  scrubbing coarse and, worse, stops Jellyfin's HLS segment boundaries landing
+  on keyframes, which turns a direct stream into a transcode on the target host.
 - `encoder.ts` parses `-progress pipe:1`. **ETA comes from throughput measured
   over a trailing 120-second window**, never a static figure — the target host
   throttles, so a rate sampled in the first minute is a lie by hour three.
