@@ -11,6 +11,17 @@ universally compatible choice. A 7.1 source needs an explicit, correctly
 weighted 7.1→5.1 downmix, not ffmpeg's default fold, which leaves dialogue
 sitting too low against the surrounds.
 
+**Except for Atmos, where the track is added, not replaced.** Converting the
+video never required touching the audio. Excluding Atmos files meant they
+never got converted at all; replacing the track meant discarding objects
+quarantine cannot give back. So the original is copied untouched and an AC3
+5.1 track is added beside it, marked default so players pick it. `planFor`
+forces `audioPolicy: "add"` whenever any track reports Atmos, and a preset
+saying `replace` cannot override that.
+
+**Dolby Vision is still excluded outright** — its metadata does not survive
+this pipeline reliably. That is the only remaining hard block.
+
 **Video: split on resolution.** 1080p and below uses `libx265` (CRF 20,
 preset medium, 10-bit). 2160p uses `hevc_videotoolbox` (10-bit). This is a
 measurement, not a preference — see "Host" below.

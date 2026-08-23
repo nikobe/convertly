@@ -500,7 +500,7 @@ function Row({
           {a?.chips.map((chip) => (
             <span className={`chip ${chip.tone}`} key={chip.label} title={chip.title}>{chip.label}</span>
           ))}
-          {a?.blockedReason && <span className="blocked" title={a.blockedReason}>· held</span>}
+          {a?.blockedReason && <span className="blocked" title={a.blockedReason}>won\u2019t convert</span>}
         </td>
         <td className="num">{duration(entry.probe?.durationSec ?? null)}</td>
         <td className="num">{bytes(entry.size)}</td>
@@ -513,6 +513,7 @@ function Row({
           <td colSpan={6}>
             <TrackPanel
               entry={entry}
+              blockedReason={a?.blockedReason}
               selection={selection ?? keepEverything(entry.probe)}
               onChange={onSelectionChange}
               selectedCount={selectedCount}

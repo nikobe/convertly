@@ -4,6 +4,7 @@ import { bytes } from "./format.ts";
 
 interface Props {
   entry: DirEntry;
+  blockedReason?: string | null;
   selection: Selection;
   onChange: (next: Selection) => void;
   selectedCount: number;
@@ -18,7 +19,7 @@ interface Props {
  * Per-file track chooser. Read-only in phase 01 — it changes the projection,
  * not the file — but the choice it records is what phase 02 will act on.
  */
-export function TrackPanel({ entry, selection, onChange, selectedCount, isSelected, onApplyToSelection, onConvert, busy, canConvert }: Props) {
+export function TrackPanel({ entry, blockedReason, selection, onChange, selectedCount, isSelected, onApplyToSelection, onConvert, busy, canConvert }: Props) {
   const probe = entry.probe;
   if (!probe) return null;
 
@@ -67,6 +68,7 @@ export function TrackPanel({ entry, selection, onChange, selectedCount, isSelect
   return (
     <div className="tracks">
       <p className="tfullname" title={entry.path}>{entry.name}</p>
+      {blockedReason && <p className="tblocked">Excluded — {blockedReason}</p>}
 
       <div className="tgroup">
         <h3>Video</h3>
@@ -130,7 +132,7 @@ export function TrackPanel({ entry, selection, onChange, selectedCount, isSelect
             {busy ? "A job is running" : "Encode and check"}
           </button>
         ) : (
-          <span className="tnote">Nothing to do on this file.</span>
+          <span className="tnote">{blockedReason ? "Excluded, see above." : "Nothing to do on this file."}</span>
         )}
         <span className="tdivider" aria-hidden="true" />
         <button onClick={keepAll}>Keep everything</button>

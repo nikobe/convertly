@@ -15,6 +15,8 @@ export interface BuildInput {
 export interface BuiltCommand {
   args: string[];
   encoder: "libx265" | "hevc_videotoolbox" | "copy";
+  /** Whether the primary was replaced with AC3 or joined by one. */
+  audioPolicy: "replace" | "add";
   /** Output audio stream 0 — the one made default. */
   primaryAudioIndex: number | null;
   /** Set when the hardware path needs an explicit bitrate. */
@@ -44,6 +46,8 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   const keptSubs = probe.subtitles.filter((t) => selection.subtitles.includes(t.index));
 
   const plan = planFor(probe);
+  const policy = plan.atmos ? "add" : preset.audioPolicy;
+  const primary = keptAudio[0];
   const height = probe.video.height;
   const encoder = chooseEncoder(plan.videoWork, height, preset);
 
@@ -60,6 +64,9 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   // ── stream mapping ───────────────────────────────────────────────────
   args.push("-map", `0:${probe.video.index}`);
   for (const track of keptAudio) args.push("-map", `0:${track.index}`);
+  // "add" keeps the original primary and prepends an AC3 rendering of it, so
+  // the source stream is mapped a second time.
+  if (policy === "add" && primary) args.push("-map", `0:${primary.index}`);
   for (const track of keptSubs) args.push("-map", `0:${track.index}`);
   args.push("-map_metadata", "0", "-map_chapters", "0");
 
@@ -102,9 +109,13 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   if (probe.video.hdr) notes.push(`${probe.video.hdr} source — colour metadata is carried through by the container.`);
 
   // ── audio ────────────────────────────────────────────────────────────
+  // Under "add" the compatibility track is appended, so it is the last output
+  // audio stream and the originals are all copied untouched.
+  const compatIndex = policy === "add" && primary ? keptAudio.length : -1;
+
   keptAudio.forEach((track, outputIndex) => {
     const needsReplacing = AUDIO_REPLACE.has(track.codec.toLowerCase());
-    if (!needsReplacing) {
+    if (policy === "add" || !needsReplacing) {
       args.push(`-c:a:${outputIndex}`, "copy");
       return;
     }
@@ -123,10 +134,34 @@ export function buildCommand(input: BuildInput): BuiltCommand {
     }
   });
 
-  // The kept primary leads and is the default, so players pick it without help.
-  if (keptAudio.length > 0) {
-    args.push("-disposition:a:0", "default");
-    for (let i = 1; i < keptAudio.length; i++) args.push(`-disposition:a:${i}`, "0");
+  if (compatIndex >= 0 && primary) {
+    args.push(`-c:a:${compatIndex}`, "ac3", `-b:a:${compatIndex}`, String(preset.ac3Bitrate));
+    if (primary.channels > 6) {
+      args.push(
+        `-filter:a:${compatIndex}`,
+        "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|SL=0.707*SL+0.707*BL|SR=0.707*SR+0.707*BR",
+      );
+    } else {
+      args.push(`-ac:a:${compatIndex}`, String(Math.min(primary.channels, 6)));
+    }
+    args.push(`-metadata:s:a:${compatIndex}`, "title=AC3 5.1 (compatibility)");
+    if (primary.language) args.push(`-metadata:s:a:${compatIndex}`, `language=${primary.language}`);
+    notes.push(
+      plan.atmos
+        ? "Atmos detected: the original track is copied untouched and an AC3 5.1 track is added alongside it. " +
+          "Nothing is discarded — replacing it would throw away objects quarantine cannot give back."
+        : "Original audio kept, AC3 5.1 added alongside it.",
+    );
+  }
+
+  // The default track is the one a player should pick without help: the
+  // compatibility track when there is one, otherwise the kept primary.
+  const totalAudio = keptAudio.length + (compatIndex >= 0 ? 1 : 0);
+  if (totalAudio > 0) {
+    const defaultIndex = compatIndex >= 0 ? compatIndex : 0;
+    for (let i = 0; i < totalAudio; i++) {
+      args.push(`-disposition:a:${i}`, i === defaultIndex ? "default" : "0");
+    }
   }
 
   // ── subtitles ────────────────────────────────────────────────────────
@@ -137,6 +172,7 @@ export function buildCommand(input: BuildInput): BuiltCommand {
   return {
     args,
     encoder,
+    audioPolicy: policy,
     primaryAudioIndex: keptAudio[0]?.index ?? null,
     targetVideoBitrate,
     notes,

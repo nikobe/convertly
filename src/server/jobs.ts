@@ -111,7 +111,7 @@ export class JobRunner {
     const probe = await freshProbe(this.deps.ffprobePath, input.path);
     const assessment = assess(probe);
     if (assessment.blockedReason) {
-      throw new Error(`${assessment.blockedReason} Override it deliberately if you really want to.`);
+      throw new Error(assessment.blockedReason);
     }
 
     const id = randomUUID();

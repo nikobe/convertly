@@ -87,6 +87,12 @@ function audioScore(t: AudioTrack): number {
 export interface Plan {
   videoWork: boolean;
   audioWork: boolean;
+  /**
+   * Forced to "add" when the primary carries Atmos: replacing would discard
+   * objects that quarantine cannot give back once the window closes.
+   */
+  audioPolicy: "replace" | "add";
+  atmos: boolean;
   encoder: "libx265" | "hevc_videotoolbox" | null;
   replaceRatio: number | undefined;
   bloated: boolean;
@@ -97,17 +103,27 @@ export interface Plan {
 export function planFor(probe: Probe): Plan {
   const video = probe.video;
   if (!video) {
-    return { videoWork: false, audioWork: false, encoder: null, replaceRatio: undefined, bloated: false, bitsPerPixel: null };
+    return {
+      videoWork: false, audioWork: false, audioPolicy: "replace", atmos: false,
+      encoder: null, replaceRatio: undefined, bloated: false, bitsPerPixel: null,
+    };
   }
   const codec = video.codec.toLowerCase();
   const bpp = bitsPerPixel(video.bitrate, video.width, video.height, video.fps);
   const replaceRatio = VIDEO_REPLACE_RATIO[codec];
   const bloated = EFFICIENT_VIDEO.has(codec) && bpp !== null && bpp > BLOATED_BPP;
   const videoWork = replaceRatio !== undefined || bloated;
-  const audioWork = probe.audio.some((a) => AUDIO_REPLACE.has(a.codec.toLowerCase()));
+  const primary = primaryAudio(probe.audio);
+  const atmos = probe.audio.some((a) => a.hasAtmos);
+  // EAC3 and TrueHD Atmos will not direct-play on a basic Dolby Digital
+  // chain, so they still need an AC3 track — just not at the cost of the
+  // original.
+  const audioWork = probe.audio.some((a) => AUDIO_REPLACE.has(a.codec.toLowerCase())) || (atmos && Boolean(primary));
 
   return {
     videoWork,
+    audioPolicy: atmos ? "add" : "replace",
+    atmos,
     audioWork,
     encoder: videoWork ? (video.height >= HARDWARE_MIN_HEIGHT ? "hevc_videotoolbox" : "libx265") : null,
     replaceRatio,
@@ -160,7 +176,11 @@ export function estimateBytes(probe: Probe, plan: Plan, selection: Selection): n
   const primary = primaryAudio(keptAudio);
   let audioBitrate = 0;
   for (const track of keptAudio) {
-    if (primary && track.index === primary.index) {
+    const isPrimary = primary && track.index === primary.index;
+    if (isPrimary && plan.audioPolicy === "add") {
+      // Both survive: the original untouched, plus a new AC3 track.
+      audioBitrate += (track.bitrate ?? 640_000) + AC3_BITRATE;
+    } else if (isPrimary) {
       audioBitrate += AUDIO_REPLACE.has(track.codec.toLowerCase()) ? AC3_BITRATE : track.bitrate ?? AC3_BITRATE;
     } else {
       audioBitrate += track.bitrate ?? 128_000;

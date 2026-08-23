@@ -163,3 +163,41 @@ test("the output path is the last argument and overwrite is explicit", () => {
   assert.equal(args.at(-1), "/m/.convertly-tmp/out.mkv");
   assert.equal(args.at(-2), "-y");
 });
+
+test("an Atmos track is kept and joined by AC3, never replaced", () => {
+  const p = probe({ audio: [audio({ codec: "eac3", channels: 6, bitrate: 768_000, hasAtmos: true })] });
+  const { args, audioPolicy } = build(p);
+
+  assert.equal(audioPolicy, "add", "replacing would discard objects quarantine cannot give back");
+  // The source stream is mapped twice — copied, then encoded — and the audio
+  // outputs stay contiguous ahead of the subtitles.
+  const maps = args.reduce<string[]>((acc, a, i) => (a === "-map" ? [...acc, args[i + 1]!] : acc), []);
+  assert.deepEqual(maps, ["0:0", "0:1", "0:1", "0:10"]);
+  assert.equal(arg(args, "-c:a:0"), "copy", "the Atmos track must survive untouched");
+  assert.equal(arg(args, "-c:a:1"), "ac3");
+  assert.equal(arg(args, "-b:a:1"), "640000");
+});
+
+test("the added compatibility track is the one players default to", () => {
+  const p = probe({ audio: [audio({ codec: "eac3", channels: 6, hasAtmos: true })] });
+  const { args } = build(p);
+  assert.equal(arg(args, "-disposition:a:0"), "0", "the Atmos original should not be the default");
+  assert.equal(arg(args, "-disposition:a:1"), "default");
+});
+
+test("Atmos forces add even when the preset says replace", () => {
+  const p = probe({ audio: [audio({ codec: "truehd", channels: 8, hasAtmos: true })] });
+  const { audioPolicy, args } = build(p, { ...DEFAULT_PRESET, audioPolicy: "replace" });
+  assert.equal(audioPolicy, "add");
+  assert.equal(arg(args, "-c:a:0"), "copy");
+  // 7.1 Atmos still needs the explicit downmix on the added track.
+  assert.match(arg(args, "-filter:a:1") ?? "", /^pan=5\.1\|/);
+});
+
+test("a non-Atmos file still replaces, which is the bigger saving", () => {
+  const { args, audioPolicy } = build(probe());
+  assert.equal(audioPolicy, "replace");
+  assert.equal(arg(args, "-c:a:0"), "ac3");
+  const maps = args.reduce<string[]>((acc, a, i) => (a === "-map" ? [...acc, args[i + 1]!] : acc), []);
+  assert.equal(maps.filter((m) => m === "0:1").length, 1, "the source track is mapped once under replace");
+});

@@ -10,6 +10,14 @@ export interface Preset {
   forceEncoder: "libx265" | "hevc_videotoolbox" | null;
   /** Re-encode incompatible audio to AC3 at this bitrate. */
   ac3Bitrate: number;
+  /**
+   * What to do with an incompatible primary track.
+   *
+   * "replace" swaps it for AC3 — the default, and the bigger saving.
+   * "add" keeps the original and prepends an AC3 track, which is the only
+   * safe treatment for Atmos, since those objects cannot be recovered.
+   */
+  audioPolicy: "replace" | "add";
   /** Cap output height. Off unless deliberately turned on. */
   maxHeight: number | null;
   /** 10-bit output. Free on the hardware path, better gradients everywhere. */
@@ -23,6 +31,7 @@ export const DEFAULT_PRESET: Preset = {
   x265Preset: "medium",
   forceEncoder: null,
   ac3Bitrate: 640_000,
+  audioPolicy: "replace",
   maxHeight: null,
   tenBit: true,
 };

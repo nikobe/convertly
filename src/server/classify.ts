@@ -109,14 +109,25 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
     });
   }
 
-  // ── things to leave alone ────────────────────────────────────────────
+  // ── things that change the treatment, or stop it ─────────────────────
   let blockedReason: string | null = null;
-  if (probe.audio.some((a) => a.hasAtmos)) {
-    chips.push({ label: "ATMOS", tone: "warn", title: "Carries Atmos objects. The replace policy would discard them permanently, so this file is excluded unless you override it." });
-    blockedReason = "Atmos objects would be discarded by the AC3 replace policy.";
+
+  if (plan.atmos) {
+    // Not a blocker. Converting the video does not require touching the audio,
+    // so the Atmos track is copied untouched and an AC3 5.1 track is added
+    // beside it. Replacing would discard objects nothing can recover.
+    chips.push({
+      label: "ATMOS",
+      tone: "note",
+      title:
+        "Carries Atmos objects. They are kept: the original track is copied untouched and an AC3 5.1 track " +
+        "is added alongside it so your playback client has something to direct-play. The file saves less than a " +
+        "straight replace would, which is the correct trade here.",
+    });
   }
+
   if (video.hdr === "Dolby Vision") {
-    blockedReason ??= "Dolby Vision metadata does not survive this pipeline reliably.";
+    blockedReason = "Dolby Vision metadata does not survive this pipeline reliably, so this file is excluded.";
   }
 
   // ── estimate ─────────────────────────────────────────────────────────

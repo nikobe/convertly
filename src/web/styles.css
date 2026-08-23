@@ -167,7 +167,15 @@ td.save { color: var(--amber); }
 .chip.good { border-color: var(--ok); color: var(--ok); }
 .chip.note { border-color: var(--rule-hi); color: var(--text-dim); }
 
-.blocked { color: var(--warn); font-size: 10px; letter-spacing: 0.06em; }
+.blocked {
+  color: var(--warn); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  border: 1px solid var(--warn); padding: 0 0.3rem; white-space: nowrap;
+}
+.tblocked {
+  margin: 0 0 0.2rem; padding: 0.3rem 0.4rem;
+  color: var(--warn); font-size: 11px;
+  border-left: 2px solid var(--warn); background: rgba(224, 138, 60, 0.07);
+}
 
 /* ── footer ────────────────────────────────────────────── */
 
