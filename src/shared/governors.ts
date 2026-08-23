@@ -21,9 +21,12 @@ export interface GovernorConfig {
 export const DEFAULT_GOVERNORS: GovernorConfig = {
   window: { enabled: false, from: "01:00", to: "08:30" },
   rhythm: { enabled: false, workMinutes: 90, restMinutes: 20 },
-  // Level 0 is "not throttling". Anything above means the chip is already
-  // pulling its own clocks down, and pushing harder just makes it hotter.
-  thermal: { enabled: true, maxLevel: 0 },
+  // machdep.xcpm.cpu_thermal_level is an instantaneous reading that swings
+  // wildly under load — 38, 19, 3, 0 across fifteen seconds on a machine that
+  // pmset reported as not throttled at all. A threshold of 0 suspended a real
+  // encode every few seconds and cut it to a third of its speed. So: a high
+  // bar, and only when it stays there.
+  thermal: { enabled: true, maxLevel: 80 },
   playback: { enabled: true },
   // Enough that a drive is never driven to completely full, which upsets the
   // OS and any media server on it — not so much that a small file is blocked
@@ -110,6 +113,27 @@ export function advanceRhythm(
     return { workedMs: 0, restingUntil: now + config.restMinutes * 60_000 };
   }
   return { workedMs, restingUntil: null };
+}
+
+/** How many consecutive elevated readings before believing the machine is hot. */
+export const THERMAL_SUSTAIN_SAMPLES = 4;
+
+/**
+ * Is the machine genuinely throttling?
+ *
+ * `speedLimit` is the authoritative answer when available — below 100 means
+ * the OS is actually holding the CPU back. The level readings are noisy, so
+ * they only count when every recent sample is elevated.
+ */
+export function isThrottling(
+  recentLevels: number[],
+  maxLevel: number,
+  speedLimit: number | null,
+): boolean {
+  if (speedLimit !== null && speedLimit < 100) return true;
+  if (recentLevels.length < THERMAL_SUSTAIN_SAMPLES) return false;
+  const window = recentLevels.slice(-THERMAL_SUSTAIN_SAMPLES);
+  return window.every((level) => level > maxLevel);
 }
 
 /** Enough room for the output plus a margin? */

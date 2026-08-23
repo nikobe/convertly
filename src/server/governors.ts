@@ -3,8 +3,9 @@ import { promisify } from "node:util";
 import { statfsSync } from "node:fs";
 import { dirname } from "node:path";
 import {
-  ALLOWED, advanceRhythm, hasDiskRoom, isWithinWindow, minutesUntilWindow,
-  FRESH_RHYTHM, type GovernorConfig, type GovernorVerdict, type RhythmState,
+  ALLOWED, advanceRhythm, hasDiskRoom, isWithinWindow, minutesUntilWindow, isThrottling,
+  THERMAL_SUSTAIN_SAMPLES, FRESH_RHYTHM,
+  type GovernorConfig, type GovernorVerdict, type RhythmState,
 } from "../shared/governors.ts";
 import { formatBytes } from "../shared/format.ts";
 import type { PlexConfig } from "./integrations.ts";
@@ -12,8 +13,10 @@ import type { PlexConfig } from "./integrations.ts";
 const run = promisify(execFile);
 
 export interface ThermalReading {
-  /** 0 means not throttling; higher means the chip is pulling its own clocks down. */
+  /** Instantaneous and noisy; see isThrottling for how it is used. */
   level: number;
+  /** From pmset: below 100 means the OS is actually holding the CPU back. */
+  speedLimit: number | null;
   source: string;
   available: boolean;
 }
@@ -27,25 +30,35 @@ export interface ThermalReading {
  * an encode it is pinned by design and says nothing about heat.
  */
 export async function readThermal(): Promise<ThermalReading> {
+  let level: number | null = null;
+  let speedLimit: number | null = null;
+
   try {
     const { stdout } = await run("/usr/sbin/sysctl", ["-n", "machdep.xcpm.cpu_thermal_level"], { timeout: 4000 });
-    const level = Number(stdout.trim());
-    if (Number.isFinite(level)) return { level, source: "machdep.xcpm.cpu_thermal_level", available: true };
+    const value = Number(stdout.trim());
+    if (Number.isFinite(value)) level = value;
   } catch {
     /* Apple Silicon, or the oid is gone */
   }
+
   try {
     const { stdout } = await run("/usr/bin/pmset", ["-g", "therm"], { timeout: 4000 });
     const match = /CPU_Speed_Limit\s*=\s*(\d+)/.exec(stdout);
-    if (match) {
-      const limit = Number(match[1]);
-      // 100 is unrestricted; treat each 10% of lost headroom as a level.
-      return { level: Math.max(0, Math.round((100 - limit) / 10)), source: "pmset CPU_Speed_Limit", available: true };
-    }
+    if (match) speedLimit = Number(match[1]);
   } catch {
     /* pmset unavailable */
   }
-  return { level: 0, source: "no thermal sensor available", available: false };
+
+  if (level === null && speedLimit === null) {
+    return { level: 0, speedLimit: null, source: "no thermal sensor available", available: false };
+  }
+  return {
+    level: level ?? 0,
+    speedLimit,
+    source: [level !== null && "machdep.xcpm.cpu_thermal_level", speedLimit !== null && "pmset"]
+      .filter(Boolean).join(" + "),
+    available: true,
+  };
 }
 
 export interface PlaybackReading {
@@ -90,7 +103,8 @@ export class Governors {
   private plex: PlexConfig | null;
   private rhythm: RhythmState = FRESH_RHYTHM;
   private lastTick = Date.now();
-  private lastThermal: ThermalReading = { level: 0, source: "not read yet", available: false };
+  private lastThermal: ThermalReading = { level: 0, speedLimit: null, source: "not read yet", available: false };
+  private thermalHistory: number[] = [];
   private lastPlayback: PlaybackReading = { streams: 0, available: false };
 
   constructor(config: GovernorConfig, plex: PlexConfig | null) {
@@ -155,12 +169,15 @@ export class Governors {
 
     if (this.config.thermal.enabled) {
       this.lastThermal = await readThermal();
-      if (this.lastThermal.available && this.lastThermal.level > this.config.thermal.maxLevel) {
-        return {
-          allowed: false,
-          governor: "thermal",
-          reason: `The CPU is throttling (level ${this.lastThermal.level}) — letting it cool`,
-        };
+      if (this.lastThermal.available) {
+        this.thermalHistory.push(this.lastThermal.level);
+        if (this.thermalHistory.length > THERMAL_SUSTAIN_SAMPLES * 2) this.thermalHistory.shift();
+        if (isThrottling(this.thermalHistory, this.config.thermal.maxLevel, this.lastThermal.speedLimit)) {
+          const why = this.lastThermal.speedLimit !== null && this.lastThermal.speedLimit < 100
+            ? `the OS has cut the CPU to ${this.lastThermal.speedLimit}%`
+            : `it has stayed above ${this.config.thermal.maxLevel} for ${THERMAL_SUSTAIN_SAMPLES} checks`;
+          return { allowed: false, governor: "thermal", reason: `Letting the CPU cool — ${why}` };
+        }
       }
     }
 

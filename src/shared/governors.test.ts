@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   parseClock, isWithinWindow, minutesUntilWindow, advanceRhythm,
-  hasDiskRoom, FRESH_RHYTHM, DEFAULT_GOVERNORS,
+  hasDiskRoom, FRESH_RHYTHM, DEFAULT_GOVERNORS, isThrottling,
 } from "./governors.ts";
 
 const at = (h: number, m = 0) => new Date(2026, 0, 15, h, m);
@@ -91,4 +91,31 @@ test("the defaults protect without needing configuration", () => {
   assert.equal(DEFAULT_GOVERNORS.disk.headroomBytes, 5 * 1024 ** 3);
   assert.equal(DEFAULT_GOVERNORS.window.enabled, false);
   assert.equal(DEFAULT_GOVERNORS.rhythm.enabled, false);
+});
+
+test("a single thermal spike does not suspend an encode", () => {
+  // Real readings from the target host while encoding: 38, 19, 3, 0 across
+  // fifteen seconds, on a machine pmset reported as not throttled. Reacting to
+  // any of those cut a real encode to a third of its speed.
+  assert.equal(isThrottling([38, 19, 3, 0], 80, 100), false);
+  assert.equal(isThrottling([95, 12, 90, 4], 80, 100), false, "alternating spikes are still noise");
+});
+
+test("sustained heat does suspend it", () => {
+  assert.equal(isThrottling([95, 92, 88, 90], 80, 100), true);
+});
+
+test("the OS actually cutting the CPU is believed immediately", () => {
+  // CPU_Speed_Limit below 100 is not a guess, it is the OS saying so.
+  assert.equal(isThrottling([0, 0, 0, 0], 80, 70), true);
+  assert.equal(isThrottling([], 80, 50), true);
+});
+
+test("too few samples means no verdict yet", () => {
+  assert.equal(isThrottling([99, 99], 80, null), false);
+  assert.equal(isThrottling([99, 99, 99, 99], 80, null), true);
+});
+
+test("the default threshold is well clear of normal encoding noise", () => {
+  assert.ok(DEFAULT_GOVERNORS.thermal.maxLevel >= 50, "0 suspended a healthy machine constantly");
 });
