@@ -174,8 +174,8 @@ export class Governors {
         if (this.thermalHistory.length > THERMAL_SUSTAIN_SAMPLES * 2) this.thermalHistory.shift();
         if (isThrottling(this.thermalHistory, this.config.thermal.maxLevel, this.lastThermal.speedLimit)) {
           const why = this.lastThermal.speedLimit !== null && this.lastThermal.speedLimit < 100
-            ? `the OS has cut the CPU to ${this.lastThermal.speedLimit}%`
-            : `it has stayed above ${this.config.thermal.maxLevel} for ${THERMAL_SUSTAIN_SAMPLES} checks`;
+            ? `the OS has cut the CPU to ${this.lastThermal.speedLimit}% of full speed`
+            : `the thermal level stayed above ${this.config.thermal.maxLevel} for ${THERMAL_SUSTAIN_SAMPLES} checks`;
           return { allowed: false, governor: "thermal", reason: `Letting the CPU cool — ${why}` };
         }
       }

@@ -55,10 +55,11 @@ button:disabled { cursor: not-allowed; }
    come and go, and a fixed grid-template-rows gave the flexible row to
    whichever child happened to sit in it. */
 .app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.app > .hud,
-.app > .quality,
-.app > .job,
-.app > .foot { flex: none; }
+/* Every child keeps its own height; only the listing absorbs what is left.
+   Named-panel lists went stale twice — once naming .job after the queue
+   replaced it, which let the queue be squeezed to 34px behind the footer. */
+.app > * { flex: 0 0 auto; }
+.app > .body { flex: 1 1 auto; min-height: 0; }
 
 /* ── top bar ───────────────────────────────────────────── */
 

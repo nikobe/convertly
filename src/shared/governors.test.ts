@@ -101,10 +101,6 @@ test("a single thermal spike does not suspend an encode", () => {
   assert.equal(isThrottling([95, 12, 90, 4], 80, 100), false, "alternating spikes are still noise");
 });
 
-test("sustained heat does suspend it", () => {
-  assert.equal(isThrottling([95, 92, 88, 90], 80, 100), true);
-});
-
 test("the OS actually cutting the CPU is believed immediately", () => {
   // CPU_Speed_Limit below 100 is not a guess, it is the OS saying so.
   assert.equal(isThrottling([0, 0, 0, 0], 80, 70), true);
@@ -116,6 +112,17 @@ test("too few samples means no verdict yet", () => {
   assert.equal(isThrottling([99, 99, 99, 99], 80, null), true);
 });
 
-test("the default threshold is well clear of normal encoding noise", () => {
-  assert.ok(DEFAULT_GOVERNORS.thermal.maxLevel >= 50, "0 suspended a healthy machine constantly");
+test("the level reading is ignored by default", () => {
+  // Measured over a real encode: median 100, while the OS reported
+  // CPU_Speed_Limit 100 throughout. It tracks load, not throttling.
+  assert.equal(DEFAULT_GOVERNORS.thermal.maxLevel, null);
+  assert.equal(isThrottling([100, 100, 100, 100], null, 100), false,
+    "a pegged level with no OS throttling must not stop work");
+  assert.equal(isThrottling([100, 100, 100, 100], null, 60), true,
+    "but the OS cutting the CPU still does");
+});
+
+test("the level can still be opted into", () => {
+  assert.equal(isThrottling([95, 92, 88, 90], 80, 100), true);
+  assert.equal(isThrottling([38, 19, 3, 0], 80, 100), false);
 });

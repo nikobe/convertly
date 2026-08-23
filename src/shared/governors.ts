@@ -10,8 +10,12 @@ export interface GovernorConfig {
   window: { enabled: boolean; from: string; to: string };
   /** Work for a while, then idle, so the machine is not pinned all night. */
   rhythm: { enabled: boolean; workMinutes: number; restMinutes: number };
-  /** Back off when the CPU reports it is being throttled. */
-  thermal: { enabled: boolean; maxLevel: number };
+  /**
+   * Back off when the OS reports it has cut the CPU. `maxLevel` additionally
+   * gates on machdep.xcpm.cpu_thermal_level; null means ignore it, which is
+   * the default because that reading tracks load rather than throttling.
+   */
+  thermal: { enabled: boolean; maxLevel: number | null };
   /** Stop encoding while someone is watching something. */
   playback: { enabled: boolean };
   /** Refuse to start without room for the output. */
@@ -21,12 +25,13 @@ export interface GovernorConfig {
 export const DEFAULT_GOVERNORS: GovernorConfig = {
   window: { enabled: false, from: "01:00", to: "08:30" },
   rhythm: { enabled: false, workMinutes: 90, restMinutes: 20 },
-  // machdep.xcpm.cpu_thermal_level is an instantaneous reading that swings
-  // wildly under load — 38, 19, 3, 0 across fifteen seconds on a machine that
-  // pmset reported as not throttled at all. A threshold of 0 suspended a real
-  // encode every few seconds and cut it to a third of its speed. So: a high
-  // bar, and only when it stays there.
-  thermal: { enabled: true, maxLevel: 80 },
+  // maxLevel is off by default. Measured across a real encode,
+  // machdep.xcpm.cpu_thermal_level had a median of 100 while pmset reported
+  // CPU_Speed_Limit at 100 throughout — the OS never throttled once. It
+  // tracks how busy the CPU is, not whether it is being held back, so gating
+  // on it suspended a healthy encode 28% of the time. CPU_Speed_Limit is the
+  // OS saying it has actually cut the CPU, and that is what we act on.
+  thermal: { enabled: true, maxLevel: null },
   playback: { enabled: true },
   // Enough that a drive is never driven to completely full, which upsets the
   // OS and any media server on it — not so much that a small file is blocked
@@ -127,13 +132,16 @@ export const THERMAL_SUSTAIN_SAMPLES = 4;
  */
 export function isThrottling(
   recentLevels: number[],
-  maxLevel: number,
+  maxLevel: number | null,
   speedLimit: number | null,
 ): boolean {
+  // The authoritative answer: the OS has cut the CPU.
   if (speedLimit !== null && speedLimit < 100) return true;
+  // Opt-in only. This reading sat at 100 for a whole encode on hardware the
+  // OS never throttled, so believing it costs throughput for nothing.
+  if (maxLevel === null) return false;
   if (recentLevels.length < THERMAL_SUSTAIN_SAMPLES) return false;
-  const window = recentLevels.slice(-THERMAL_SUSTAIN_SAMPLES);
-  return window.every((level) => level > maxLevel);
+  return recentLevels.slice(-THERMAL_SUSTAIN_SAMPLES).every((level) => level > maxLevel);
 }
 
 /** Enough room for the output plus a margin? */
