@@ -85,6 +85,11 @@ export interface Assessment {
   chips: Chip[];
   /** Present when the file should be left alone; explains why. */
   blockedReason: string | null;
+  /**
+   * False when the projection shows no meaningful saving. Separate from
+   * videoWork/audioWork, which stay factual about what the file contains.
+   */
+  worthConverting: boolean;
 }
 
 export interface DirEntry {

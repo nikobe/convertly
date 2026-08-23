@@ -148,6 +148,13 @@ export class Queue {
         skipped.push({ path: entry.path, reason: "Nothing to convert — efficient video, compatible audio, no tracks dropped." });
         continue;
       }
+      if (!assessment.worthConverting && !trimsTracks) {
+        skipped.push({
+          path: entry.path,
+          reason: "Projected no smaller than the original — not worth the encode.",
+        });
+        continue;
+      }
 
       const estimated = estimateBytes(probe, planFor(probe), selection, {
         crf: preset.crf,

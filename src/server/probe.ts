@@ -75,11 +75,18 @@ export async function probeFile(ffprobePath: string, filePath: string): Promise<
   base.subtitles = streams.filter((s) => s.codec_type === "subtitle").map(toSubtitle);
 
   // ffprobe often omits per-stream video bitrate in Matroska. Derive it from
-  // the container total minus what the audio tracks declare, which is close
-  // enough for sizing decisions and clearly better than showing nothing.
+  // the container total minus the audio, which is close enough for sizing and
+  // clearly better than showing nothing.
+  //
+  // Lossless tracks frequently report no bitrate at all. Treating those as
+  // zero attributed their several Mbps to the video instead, which made a
+  // TrueHD film estimate *larger* after conversion than before.
   if (base.video && base.video.bitrate === null && base.durationSec) {
     const totalBits = base.size * 8;
-    const audioBits = base.audio.reduce((sum, a) => sum + (a.bitrate ?? 0) * base.durationSec!, 0);
+    const audioBits = base.audio.reduce(
+      (sum, a) => sum + (a.bitrate ?? assumedAudioBitrate(a)) * base.durationSec!,
+      0,
+    );
     const videoBits = totalBits - audioBits;
     if (videoBits > 0) base.video.bitrate = Math.round(videoBits / base.durationSec);
   }
@@ -186,4 +193,20 @@ function shortError(err: unknown): string {
   const stderr = (err as { stderr?: string }).stderr;
   const text = (stderr && stderr.trim()) || message;
   return text.split("\n")[0]!.slice(0, 300);
+}
+
+/**
+ * Rough bitrate for a track that reports none.
+ *
+ * Only used to keep a derived video bitrate honest — never to size an output,
+ * where the real figure comes from the encoder settings.
+ */
+export function assumedAudioBitrate(track: AudioTrack): number {
+  const codec = track.codec.toLowerCase();
+  const channels = Math.max(1, track.channels || 2);
+  if (codec.startsWith("pcm")) return channels * 1_150_000;      // 48kHz/24-bit
+  if (codec === "truehd" || codec === "mlp") return channels * 700_000;
+  if (codec === "flac") return channels * 600_000;
+  if (codec.startsWith("dts")) return channels * 400_000;
+  return 128_000 * Math.min(channels, 6);
 }

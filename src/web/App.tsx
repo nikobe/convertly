@@ -112,7 +112,7 @@ export function App() {
 
   const videos = useMemo(() => listing?.entries.filter((e) => e.kind === "video") ?? [], [listing]);
   const actionable = useMemo(
-    () => videos.filter((e) => e.assessment && (e.assessment.videoWork || e.assessment.audioWork) && !e.assessment.blockedReason),
+    () => videos.filter((e) => e.assessment?.worthConverting && !e.assessment.blockedReason),
     [videos],
   );
   const recoverable = useMemo(
@@ -593,7 +593,7 @@ function Row({
   const trimmable = Boolean(entry.probe && entry.probe.audio.length + entry.probe.subtitles.length > 1);
   const { after, saving } = project(entry, selection, preset);
   // A file needing no re-encode is still worth queueing once tracks are cut.
-  const work = Boolean(a && (a.videoWork || a.audioWork || (selection && saving)) && !a.blockedReason);
+  const work = Boolean(a && (a.worthConverting || (selection && saving)) && !a.blockedReason);
 
   return (
     <>
@@ -651,7 +651,7 @@ function Row({
               onApplyToSelection={onApplyTracks}
               onConvert={onConvert}
               queued={queued}
-              canConvert={Boolean(a && (a.videoWork || a.audioWork || selection) && !a.blockedReason)}
+              canConvert={Boolean(a && (a.worthConverting || selection) && !a.blockedReason)}
             />
           </td>
         </tr>

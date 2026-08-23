@@ -252,3 +252,25 @@ test("the 2:1 test file reports 1080P, not 720P", () => {
   assert.ok(a.chips.some((c) => c.label === "1080P"), a.chips.map((c) => c.label).join(" "));
   assert.equal(a.encoder, "libx265");
 });
+
+test("a projection that does not beat the source is not offered", () => {
+  // A TrueHD film reporting no audio bitrate had its several Mbps attributed
+  // to video, so replacing the audio added 640k on top of a figure that
+  // already contained it — and the estimate came out larger than the source.
+  const p = probe({
+    video: { index: 0, codec: "hevc", width: 3840, height: 1606, pixFmt: "yuv420p10le", bitDepth: 10, fps: 24, bitrate: 14_200_000, hdr: null, colorTransfer: null },
+    audio: [audio({ index: 1, codec: "truehd", channels: 6, bitrate: null }), audio({ index: 2, codec: "ac3", channels: 6, bitrate: 448_000 })],
+    size: 14_340_000_000,
+    durationSec: 7860,
+  });
+  const a = assess(p);
+  assert.equal(a.audioWork, true, "TrueHD is still lossless and still worth replacing in principle");
+  assert.equal(a.worthConverting, false, "but not when the projection is no smaller");
+  assert.ok(a.chips.some((c) => c.label === "NO GAIN"));
+});
+
+test("a file that genuinely shrinks is still offered", () => {
+  const a = assess(probe());
+  assert.equal(a.worthConverting, true);
+  assert.ok(!a.chips.some((c) => c.label === "NO GAIN"));
+});

@@ -15,7 +15,7 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
   const chips: Chip[] = [];
   const empty: Assessment = {
     videoWork: false, audioWork: false, encoder: null, bitsPerPixel: null,
-    estimatedBytes: null, savingBytes: null, chips, blockedReason: null,
+    estimatedBytes: null, savingBytes: null, chips, blockedReason: null, worthConverting: false,
   };
 
   if (probe.error) {
@@ -141,6 +141,26 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
   const estimatedBytes = estimateBytes(probe, plan, chosen);
   const savingBytes = estimatedBytes === null ? null : Math.max(0, probe.size - estimatedBytes);
 
+  // A projection that does not beat the source is not a conversion, whatever
+  // the codecs say. Spending three hours to produce a bigger file is the one
+  // outcome nobody wants, and the size gate would only catch it at the end.
+  const MIN_SAVING = 0.05;
+  const gains =
+    estimatedBytes === null ||
+    (probe.size - estimatedBytes) / probe.size >= MIN_SAVING;
+  const worthConverting = (plan.videoWork || plan.audioWork) && gains && !alreadyConverted;
+
+  if ((plan.videoWork || plan.audioWork) && !gains && !alreadyConverted) {
+    chips.push({
+      label: "NO GAIN",
+      tone: "warn",
+      title:
+        `Converting this is projected at ${((estimatedBytes ?? 0) / 1e9).toFixed(2)} GB against ` +
+        `${(probe.size / 1e9).toFixed(2)} GB now — not worth the encode. Usually means the file is ` +
+        `already efficiently encoded, or its size is mostly audio.`,
+    });
+  }
+
   if (!plan.videoWork && !plan.audioWork && !alreadyConverted) {
     chips.push({ label: "OK", tone: "good", title: "Efficient video and compatible audio — nothing to do." });
   }
@@ -154,6 +174,7 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
     savingBytes,
     chips,
     blockedReason,
+    worthConverting,
   };
 }
 
