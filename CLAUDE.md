@@ -97,6 +97,12 @@ software at 1080p, which is why software wins there; at 4K, software x265 is
 Derive ETAs from rolling measured throughput on the running job, never from
 the table above.
 
+**The table also flatters itself: it was measured on synthetic sources.** Real
+grainy material is materially harder. A 1920×960 WEBDL episode encoded at
+`libx265 medium crf20` on an M1 ran at 0.56× realtime — and the M1 is the
+faster machine. Treat ~0.6× sustained on the target host as an optimistic ceiling for
+real content, which is another reason ETAs must come from the running job.
+
 ### Host gotchas
 
 - **This ffmpeg build rejects `-b:v 5M`.** Emit integers: `-b:v 5000000`.
