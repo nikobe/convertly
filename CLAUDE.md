@@ -238,5 +238,4 @@ Quarantine retention is 14 days.
 
 Single committed dark theme — an amber phosphor terminal, science-fiction-terminal-adjacent, no
 light variant. Departure Mono throughout. Palette tokens live at the top of
-`src/web/styles.css`; the reference images that produced them are in
-`reference/`. Square corners, hairline rules, corner ticks — no rounded cards.
+`src/web/styles.css` and are the single source of truth for the theme. Square corners, hairline rules, corner ticks — no rounded cards.

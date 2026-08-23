@@ -48,3 +48,9 @@ npm run typecheck
 npm run build
 npm start
 ```
+
+## Credits
+
+The interface uses [Departure Mono](https://departuremono.com) by Helena Zhang,
+bundled here under the SIL Open Font License 1.1 — see
+[`resources/DepartureMono-OFL.txt`](resources/DepartureMono-OFL.txt).
