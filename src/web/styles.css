@@ -51,7 +51,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 button:disabled { cursor: not-allowed; }
 :focus-visible { outline: 1px solid var(--amber); outline-offset: 1px; }
 
-.app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+/* A flex column, not a grid: the panels between the header and the listing
+   come and go, and a fixed grid-template-rows gave the flexible row to
+   whichever child happened to sit in it. */
+.app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.app > .hud,
+.app > .quality,
+.app > .job,
+.app > .foot { flex: none; }
 
 /* ── top bar ───────────────────────────────────────────── */
 
@@ -92,7 +99,7 @@ button:disabled { cursor: not-allowed; }
 
 /* ── body split ────────────────────────────────────────── */
 
-.body { display: grid; grid-template-columns: var(--rail-w) 1fr; min-height: 0; }
+.body { flex: 1 1 auto; display: grid; grid-template-columns: var(--rail-w) 1fr; min-height: 0; }
 
 .rail {
   border-right: 1px solid var(--rule);
@@ -402,7 +409,7 @@ td.name button.expander .fname { flex: 1; }
   background: var(--panel);
   padding: 0.8rem 1rem 0.9rem;
   display: flex; flex-direction: column; gap: 0.8rem;
-  max-height: 55vh; overflow-y: auto;
+  max-height: 45vh; overflow-y: auto;
 }
 .qhead { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
 .qhead h2 {
