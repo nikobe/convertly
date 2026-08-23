@@ -114,7 +114,7 @@ function Row({
 
       {item.state !== "running" && <span className="qmsg" title={item.message}>{item.message}</span>}
 
-      <span className="qactions">
+      <span className="qbtns">
         {item.state === "review" && (
           <>
             <button className="jbtn go" onClick={onAccept}>Accept</button>
