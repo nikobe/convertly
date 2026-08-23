@@ -69,7 +69,17 @@ The replace protocol:
 4. Restore the original mtime and permissions.
 5. `POST /api/v3/command {"name":"RescanMovie","movieId":N}` — disk-only, no
    metadata-provider hit. Sonarr uses `RescanSeries` with `seriesId`.
-6. Refresh and re-analyse the item in Plex.
+   *(Built: `integrations.ts`. The item is found by matching the file against
+   each library folder, longest match first — the filename is what we keep
+   identical, so it identifies nothing.)*
+6. Refresh the folder in Plex. Its periodic scan looks for added and removed
+   files, and analysis runs on add; with the path and mtime unchanged nothing
+   prompts a re-analysis, and Plex picks direct play against transcode from
+   that stored codec info. *(Built.)*
+
+All of step 5 and 6 is best-effort and never fails a job: by then the swap is
+verified and the library is right on disk. A server being down is a stale
+database. Failures are reported on the queue item and in the health strip.
 
 Step 5 matters because Sonarr only re-reads mediainfo when a filename changes,
 so an in-place swap otherwise leaves its database describing a file that no

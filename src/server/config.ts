@@ -4,6 +4,7 @@ import { resolve, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import type { Root } from "../shared/types.ts";
 import { DEFAULT_ALLOWED_CLIENTS, parseClientRule, AccessRuleError } from "./access.ts";
+import type { IntegrationsConfig } from "./integrations.ts";
 
 export interface Config {
   host: string;
@@ -16,6 +17,8 @@ export interface Config {
   dataDir: string;
   /** Client addresses permitted to reach the API. */
   allowedClients: string[];
+  /** Optional: told about a swap so their databases stay accurate. */
+  integrations: IntegrationsConfig;
 }
 
 const DEFAULTS = {
@@ -68,6 +71,11 @@ export function loadConfig(path = process.env.CONVERTLY_CONFIG ?? "config/conver
       : DEFAULTS.videoExtensions,
     dataDir: typeof obj.dataDir === "string" ? obj.dataDir : "data",
     allowedClients: parseAllowedClients(obj.allowedClients),
+    integrations: {
+      radarr: parseService(obj.radarr, "radarr", "apiKey"),
+      sonarr: parseService(obj.sonarr, "sonarr", "apiKey"),
+      plex: parseService(obj.plex, "plex", "token") as IntegrationsConfig["plex"],
+    },
   };
 }
 
@@ -87,6 +95,22 @@ function parseAllowedClients(value: unknown): string[] {
     }
   }
   return entries.length > 0 ? entries : DEFAULT_ALLOWED_CLIENTS;
+}
+
+/**
+ * A service block is all-or-nothing: a URL with no key would fail on every
+ * request, which is worse than being switched off.
+ */
+function parseService(value: unknown, name: string, secretKey: "apiKey" | "token"): never | null | { url: string; apiKey: string } {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object") throw new ConfigError(`"${name}" must be an object with url and ${secretKey}.`);
+  const obj = value as Record<string, unknown>;
+  const url = obj.url;
+  const secret = obj[secretKey];
+  if (typeof url !== "string" || !url.trim()) throw new ConfigError(`"${name}.url" is required.`);
+  if (typeof secret !== "string" || !secret.trim()) throw new ConfigError(`"${name}.${secretKey}" is required.`);
+  // Normalised to apiKey internally; Plex calls the same thing a token.
+  return { url: url.trim(), apiKey: secret.trim() } as never;
 }
 
 function parseRoots(value: unknown, configPath: string): Root[] {

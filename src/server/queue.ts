@@ -5,6 +5,7 @@ import { runJob, freshProbe } from "./pipeline.ts";
 import { replaceInPlace } from "./replace.ts";
 import { assess } from "./classify.ts";
 import type { Store, QueueRow } from "./db.ts";
+import type { Integrations } from "./integrations.ts";
 import type { Root, Probe } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
 import type { Check } from "../shared/check.ts";
@@ -16,6 +17,7 @@ import type { JobStage } from "../shared/job.ts";
 
 export interface QueueDeps {
   store: Store;
+  integrations: Integrations;
   roots: Root[];
   ffmpegPath: string;
   ffprobePath: string;
@@ -238,6 +240,7 @@ export class Queue {
       finished_at: Date.now(),
     });
     this.emit();
+    void this.notify(id, row.path, `Replaced after review, ${formatBytes(saved)} saved.`);
   }
 
   /** Throw a held encode away and keep the original. */
@@ -251,6 +254,23 @@ export class Queue {
       message: "Encode discarded. The original is untouched.",
       finished_at: Date.now(),
     });
+    this.emit();
+  }
+
+  /**
+   * Tell the library managers the file changed. Deliberately not awaited by
+   * the worker: the swap is already done and verified, so a Radarr that is
+   * down must not hold up the next encode or mark the job failed.
+   */
+  private async notify(id: string, path: string, baseMessage: string): Promise<void> {
+    if (!this.deps.integrations.anyConfigured) return;
+    const outcomes = await this.deps.integrations.afterReplace(path);
+    if (outcomes.length === 0) return;
+    const failed = outcomes.filter((o) => !o.ok);
+    const suffix = failed.length === 0
+      ? ` ${outcomes.map((o) => o.service).join(", ")} updated.`
+      : ` Could not tell ${failed.map((o) => `${o.service} (${o.detail})`).join(", ")} — rescan by hand.`;
+    this.deps.store.updateQueueItem(id, { message: baseMessage + suffix });
     this.emit();
   }
 
@@ -331,6 +351,8 @@ export class Queue {
         saved_bytes: saved,
         finished_at: Date.now(),
       });
+
+      if (state === "done") void this.notify(row.id, probe.path, result.message);
     } catch (err) {
       this.deps.store.updateQueueItem(row.id, {
         state: "failed",

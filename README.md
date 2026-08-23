@@ -36,6 +36,36 @@ server on port 5273, proxying `/api` to the API.
 | `ffprobePath` / `ffmpegPath` | Explicit binary paths. Omit to auto-detect. |
 | `scanConcurrency` | Parallel ffprobes during a scan. Default 4. |
 | `videoExtensions` | Which extensions count as video. |
+| `radarr` / `sonarr` | `{ "url": "...", "apiKey": "..." }`. Optional. |
+| `plex` | `{ "url": "...", "token": "..." }`. Optional. |
+
+## Telling Radarr, Sonarr and Plex
+
+Optional, and off until you add credentials:
+
+```json
+{
+  "radarr": { "url": "http://localhost:7878", "apiKey": "..." },
+  "sonarr": { "url": "http://localhost:8989", "apiKey": "..." },
+  "plex":   { "url": "http://localhost:32400", "token": "..." }
+}
+```
+
+After a file is replaced, the owning item is rescanned. This is needed because
+Sonarr and Radarr only re-read a file's mediainfo when its **filename**
+changes — and keeping the filename identical is exactly what stops them
+re-downloading. Without a rescan their databases go on describing the file
+they imported.
+
+Plex is the same problem wearing a different hat: its periodic scan looks for
+*added and removed* files, and analysis — which records codec and bitrate —
+runs when an item is added. Since the path and mtime are unchanged, nothing
+prompts a re-analysis, and Plex decides direct-play against transcode from
+that stale information.
+
+Failures here never fail a job. By that point the swap is done and verified;
+an unreachable server is a stale database, not a lost file. It says so in the
+queue and in the health strip.
 
 ## Reaching it from another machine
 

@@ -7,6 +7,7 @@ import type { Scanner } from "../scanner.ts";
 import type { Binary } from "../binaries.ts";
 import { resolveWithinRoots, PathNotAllowedError } from "../paths.ts";
 import type { Queue } from "../queue.ts";
+import type { Integrations } from "../integrations.ts";
 import { DEFAULT_PRESET, type Preset } from "../../shared/preset.ts";
 import type { Selection } from "../../shared/estimate.ts";
 import type { HealthReport } from "../../shared/types.ts";
@@ -19,10 +20,11 @@ export interface Deps {
   ffprobe: Binary;
   ffmpeg: Binary | null;
   queue: Queue;
+  integrations: Integrations;
 }
 
 export async function registerApi(app: FastifyInstance, deps: Deps): Promise<void> {
-  const { config, store, scanner, ffprobe, ffmpeg, queue } = deps;
+  const { config, store, scanner, ffprobe, ffmpeg, queue, integrations } = deps;
 
   app.get("/api/health", async (): Promise<HealthReport> => {
     const checks: HealthReport["checks"] = [
@@ -52,6 +54,24 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
         ? `Any address (${config.host}:${config.port}) — no restriction`
         : `${config.host}:${config.port} · ${config.allowedClients.join(", ")}`,
     });
+
+    // Probed live so an unreachable Radarr shows up before a batch, not after.
+    for (const outcome of await integrations.check()) {
+      checks.push({
+        id: `svc:${outcome.service}`,
+        label: outcome.service === "plex" ? "Plex" : outcome.service === "radarr" ? "Radarr" : "Sonarr",
+        ok: outcome.ok,
+        detail: outcome.ok ? outcome.detail : `Configured but ${outcome.detail}`,
+      });
+    }
+    if (!integrations.anyConfigured) {
+      checks.push({
+        id: "svc:none",
+        label: "Library managers",
+        ok: true,
+        detail: "Not configured — rescan Radarr/Sonarr by hand after a batch",
+      });
+    }
 
     for (const root of config.roots) {
       const mounted = existsSync(root.path);
