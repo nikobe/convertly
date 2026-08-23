@@ -87,6 +87,7 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     ffmpegPath,
     args: built.args,
     durationSec: probe.durationSec,
+    totalFrames: expectedFrames(probe),
     onProgress,
     signal,
   });
@@ -153,6 +154,13 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
     `Replaced in place, ${formatBytes(saved)} saved. Original kept in quarantine.`,
     { ...withChecks, record },
   );
+}
+
+/** Video frames the encode should produce, for measuring progress against. */
+export function expectedFrames(probe: Probe): number | null {
+  const fps = probe.video?.fps;
+  if (!probe.durationSec || !fps || fps <= 0) return null;
+  return Math.round(probe.durationSec * fps);
 }
 
 /** Re-probe a path just before a job, so a stale cache cannot drive an encode. */

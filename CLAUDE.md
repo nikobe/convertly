@@ -205,14 +205,18 @@ outcome keeps the encode so accepting it later costs no re-encode.
   2-second cadence into irregular gaps of up to 20 seconds. That makes Plex
   scrubbing coarse and, worse, stops Jellyfin's HLS segment boundaries landing
   on keyframes, which turns a direct stream into a transcode on the target host.
-- `encoder.ts` parses `-progress pipe:1`. **ETA comes from throughput measured
-  over a trailing 120-second window**, never a static figure — the target host
-  throttles, so a rate sampled in the first minute is a lie by hour three.
-  The window is 120s rather than 60s because x265 frame threading emits
-  `out_time` in bursts: the fraction plateaus for 20s or more while fps keeps
-  moving, and a 60s window caught those plateaus and swung the ETA from 77s to
-  130s. No ETA is published until 20s of samples exist. `pause()`/`resume()`
-  are SIGSTOP/SIGCONT, so governors are cheap.
+- `encoder.ts` parses `-progress pipe:1`. **Progress is measured from `frame=`
+  against duration × fps, never from `out_time`.** `out_time` is the muxer's
+  furthest-written timestamp, and a stream-copied audio track is written far
+  ahead of the encode: on a 2-minute file it read 64s — 53% — after eight
+  video frames, so the bar jumped to half instantly, sat there, then finished
+  abruptly. There is a test asserting the published fraction derives from the
+  frame count.
+- **ETA comes from frames per second measured over a trailing 120-second
+  window**, never a static figure — the target host throttles, so a rate sampled in
+  the first minute is a lie by hour three. Nothing is published until 20s of
+  samples exist. `pause()`/`resume()` are SIGSTOP/SIGCONT, so governors are
+  cheap.
 - `verify.ts` gates on readability, duration drift, track census, chapters, a
   full decode sweep, size delta and mean VMAF over three sampled windows.
   `fail` aborts; `review` holds for a human. **It reports stages**, because on

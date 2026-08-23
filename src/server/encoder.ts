@@ -19,6 +19,15 @@ export interface EncodeOptions {
   ffmpegPath: string;
   args: string[];
   durationSec: number | null;
+  /**
+   * Video frames expected in the output.
+   *
+   * This, not out_time, is what progress is measured against. out_time is the
+   * muxer's furthest-written timestamp, and a stream-copied audio track is
+   * written far ahead of the encode: on a 2-minute file it reported 64s —
+   * 53% — after eight frames. frame= only counts encoded video.
+   */
+  totalFrames: number | null;
   onProgress?: (progress: Progress) => void;
   signal?: AbortSignal;
 }
@@ -44,9 +53,9 @@ export class Encode {
   private paused = false;
 
   async run(options: EncodeOptions): Promise<EncodeResult> {
-    const { ffmpegPath, args, durationSec, onProgress, signal } = options;
+    const { ffmpegPath, args, durationSec, totalFrames, onProgress, signal } = options;
     const started = Date.now();
-    const samples: { at: number; outTime: number }[] = [];
+    const samples: { at: number; frame: number }[] = [];
     let stderr = "";
     let cancelled = false;
 
@@ -81,20 +90,21 @@ export class Encode {
       if (key !== "progress") return;
 
       const outTimeSec = Number(fields.get("out_time_us") ?? 0) / 1e6;
+      const frame = Number(fields.get("frame") ?? 0);
       const now = Date.now();
-      samples.push({ at: now, outTime: outTimeSec });
+      samples.push({ at: now, frame });
       // A trailing window: long enough to ride over x265's bursty out_time
       // reporting, short enough to still reflect thermal throttling, which
       // happens over minutes rather than seconds.
       while (samples.length > 2 && now - samples[0]!.at > ETA_WINDOW_MS) samples.shift();
 
       onProgress?.({
-        fraction: durationSec ? Math.min(1, outTimeSec / durationSec) : null,
+        fraction: totalFrames && totalFrames > 0 ? Math.min(1, frame / totalFrames) : null,
         outTimeSec,
-        frame: Number(fields.get("frame") ?? 0),
+        frame,
         fps: Number(fields.get("fps") ?? 0),
         speed: parseSpeed(fields.get("speed")),
-        etaSec: estimateEta(samples, durationSec, outTimeSec),
+        etaSec: estimateEta(samples, totalFrames, frame),
         outputBytes: Number(fields.get("total_size") ?? 0),
       });
     });
@@ -150,23 +160,23 @@ export function parseSpeed(value: string | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Seconds remaining, from throughput measured across the trailing window. */
+/**
+ * Seconds remaining, from frames-per-second measured across the trailing
+ * window. Frames, not out_time: see EncodeOptions.totalFrames.
+ */
 export function estimateEta(
-  samples: { at: number; outTime: number }[],
-  durationSec: number | null,
-  outTimeSec: number,
+  samples: { at: number; frame: number }[],
+  totalFrames: number | null,
+  frame: number,
 ): number | null {
-  if (!durationSec || samples.length < 2) return null;
+  if (!totalFrames || totalFrames <= 0 || samples.length < 2) return null;
   const first = samples[0]!;
   const last = samples[samples.length - 1]!;
-  const wallElapsed = (last.at - first.at) / 1000;
-  // x265 emits out_time in bursts, so a short window can catch a plateau and
-  // report a rate half the truth. Withhold the ETA until the window is wide
-  // enough to be worth trusting.
   if (last.at - first.at < ETA_MIN_SPAN_MS) return null;
-  const mediaEncoded = last.outTime - first.outTime;
-  if (wallElapsed <= 0 || mediaEncoded <= 0) return null;
-  const rate = mediaEncoded / wallElapsed;
-  const remaining = Math.max(0, durationSec - outTimeSec);
+  const wallElapsed = (last.at - first.at) / 1000;
+  const framesEncoded = last.frame - first.frame;
+  if (wallElapsed <= 0 || framesEncoded <= 0) return null;
+  const rate = framesEncoded / wallElapsed;
+  const remaining = Math.max(0, totalFrames - frame);
   return Math.round(remaining / rate);
 }
