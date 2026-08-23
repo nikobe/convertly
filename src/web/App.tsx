@@ -50,7 +50,8 @@ export function App() {
   const [note, setNote] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
-  const [savedPreset, setSavedPreset] = useState<Preset>(DEFAULT_PRESET);
+  const [presetLoaded, setPresetLoaded] = useState(false);
+  const [presetSaving, setPresetSaving] = useState(false);
   const [showQuality, setShowQuality] = useState(false);
 
   const go = useCallback(async (path?: string) => {
@@ -90,10 +91,30 @@ export function App() {
     api.roots().then(setRoots).catch(() => setRoots([]));
     api.bookmarks().then(setBookmarks).catch(() => setBookmarks([]));
     api.presets()
-      .then(({ active }) => { setPreset(active); setSavedPreset(active); })
-      .catch(() => undefined);
+      .then(({ active }) => setPreset(active))
+      .catch(() => undefined)
+      .finally(() => setPresetLoaded(true));
     void go();
   }, [go]);
+
+  /**
+   * Quality settings persist server-side, not in the browser.
+   *
+   * The server is what the queue will read when it runs jobs unattended, so a
+   * browser-only copy would be a second source of truth that could disagree
+   * with the one actually used. Debounced, because clicking through the
+   * quality steps would otherwise fire a write per click.
+   */
+  useEffect(() => {
+    if (!presetLoaded) return;
+    setPresetSaving(true);
+    const timer = setTimeout(() => {
+      api.saveDefaultPreset(preset)
+        .catch((err: Error) => setNote(err.message))
+        .finally(() => setPresetSaving(false));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [preset, presetLoaded]);
 
   const videos = useMemo(() => listing?.entries.filter((e) => e.kind === "video") ?? [], [listing]);
   const actionable = useMemo(
@@ -203,19 +224,6 @@ export function App() {
     }
   };
 
-  const saveDefault = async () => {
-    try {
-      const saved = await api.saveDefaultPreset(preset);
-      setSavedPreset(saved);
-      setPreset(saved);
-      setNote("Saved. This is what future encodes will be offered.");
-    } catch (err) {
-      setNote((err as Error).message);
-    }
-  };
-
-  const presetIsSaved = JSON.stringify(preset) === JSON.stringify(savedPreset);
-
   const jobAction = async (action: "accept" | "discard" | "cancel") => {
     if (!job) return;
     try {
@@ -231,7 +239,7 @@ export function App() {
       <Hud
         health={health}
         preset={preset}
-        dirty={!presetIsSaved}
+        saving={presetSaving}
         onOpenQuality={() => setShowQuality((v) => !v)}
       />
 
@@ -239,10 +247,8 @@ export function App() {
         <QualityPanel
           preset={preset}
           onChange={setPreset}
-          onSaveDefault={saveDefault}
           onClose={() => setShowQuality(false)}
-          saved={presetIsSaved}
-          isDefault={presetIsSaved}
+          saving={presetSaving}
         />
       )}
 
@@ -372,11 +378,11 @@ export function App() {
 }
 
 function Hud({
-  health, preset, dirty, onOpenQuality,
+  health, preset, saving, onOpenQuality,
 }: {
   health: HealthReport | null;
   preset: Preset;
-  dirty: boolean;
+  saving: boolean;
   onOpenQuality: () => void;
 }) {
   const [showHealth, setShowHealth] = useState(false);
@@ -418,7 +424,7 @@ function Hud({
           CRF {preset.crf}
           <span className="qextra"> · {preset.x265Preset}{preset.maxHeight ? ` · ${preset.maxHeight}p` : ""}</span>
         </span>
-        {dirty && <span className="dirty" aria-label="unsaved">•</span>}
+        {saving && <span className="dirty" aria-label="saving">•</span>}
       </button>
     </header>
   );

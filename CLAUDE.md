@@ -179,9 +179,13 @@ a standard episode.
 
 Quality is a control, not just a default. The HUD shows the active setting and
 opens a panel with picture quality, encoder speed, downscale, replacement
-audio bitrate and 10-bit. "Save as my default" persists to the `presets` table
-and is what every future encode is offered — the built-in `DEFAULT_PRESET` is
-only the fallback when nothing is saved.
+audio bitrate and 10-bit.
+
+**Changes persist to the `presets` table automatically**, debounced, with no
+save button. Deliberately server-side rather than in the browser: the queue
+runs jobs unattended and reads the stored preset, so a browser-only copy would
+be a second source of truth that could disagree with the one actually used.
+The built-in `DEFAULT_PRESET` is only the fallback when nothing is stored.
 
 - CRF is exposed by what it *does* ("Same quality", "Very good", "Good"), with
   the raw number shown alongside. A bare "20" tells nobody anything.

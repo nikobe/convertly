@@ -37,14 +37,12 @@ const CAPS = [
 ];
 
 export function QualityPanel({
-  preset, onChange, onSaveDefault, onClose, saved, isDefault,
+  preset, onChange, onClose, saving,
 }: {
   preset: Preset;
   onChange: (next: Preset) => void;
-  onSaveDefault: () => void;
   onClose: () => void;
-  saved: boolean;
-  isDefault: boolean;
+  saving: boolean;
 }) {
   const [confirmCap, setConfirmCap] = useState(false);
   const step = QUALITY_STEPS.find((s) => s.crf === preset.crf);
@@ -65,7 +63,9 @@ export function QualityPanel({
     <section className="quality" aria-label="Quality settings">
       <div className="qhead">
         <h2>Quality</h2>
-        <span className="qsub">Applies to the next encode{isDefault ? " · saved as your default" : ""}</span>
+        <span className="qsub">
+          Applies to every encode from here on{saving ? " · saving" : " · saved"}
+        </span>
         <span className="spacer" />
         <button className="jbtn" onClick={onClose}>Close</button>
       </div>
@@ -156,11 +156,9 @@ export function QualityPanel({
       </div>
 
       <div className="qactions">
-        <button className="jbtn go" onClick={onSaveDefault}>
-          {saved ? "Saved" : "Save as my default"}
-        </button>
         <span className="qnote">
-          Saved settings are offered on every future encode, on this machine and after a restart.
+          Changes are kept automatically — they survive a refresh, a restart, and apply to
+          anything the queue runs later.
         </span>
       </div>
     </section>
