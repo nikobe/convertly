@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildCommand, hardwareBitrate, BuildError } from "./ffmpeg-args.ts";
+import { buildCommand, hardwareBitrate, BuildError, DOWNMIX_7_1_TO_5_1 } from "./ffmpeg-args.ts";
 import { keepEverything } from "../shared/estimate.ts";
 import { DEFAULT_PRESET, type Preset } from "../shared/preset.ts";
 import type { Probe, AudioTrack, SubtitleTrack } from "../shared/types.ts";
@@ -77,9 +77,14 @@ test("already-compatible audio is copied, not re-encoded", () => {
 test("7.1 is downmixed with an explicit weighting, not ffmpeg's default fold", () => {
   const { args } = build(probe({ audio: [audio({ channels: 8, channelLayout: "7.1" })] }));
   const filter = arg(args, "-filter:a:0")!;
-  assert.match(filter, /^pan=5\.1\|/);
+  assert.equal(filter, DOWNMIX_7_1_TO_5_1);
   assert.match(filter, /FC=FC/, "the centre channel must survive intact or dialogue drops");
-  assert.match(filter, /SL=0\.707\*SL\+0\.707\*BL/);
+  // Outputs must be BL/BR: ffmpeg's "5.1" has back surrounds, and naming
+  // SL/SR as outputs made the filter invalid on every real 7.1 file.
+  assert.match(filter, /\|BL=/);
+  assert.match(filter, /\|BR=/);
+  assert.doesNotMatch(filter, /\|SL=/);
+  assert.doesNotMatch(filter, /\|SR=/);
 });
 
 test("the kept primary track leads and is marked default", () => {
@@ -208,7 +213,7 @@ test("7.1 is downmixed to 5.1 even when the codec is fine", () => {
   const { args } = build(p);
   assert.equal(arg(args, "-c:a:0"), "ac3");
   assert.equal(arg(args, "-b:a:0"), "640000");
-  assert.match(arg(args, "-filter:a:0") ?? "", /^pan=5\.1\|/);
+  assert.equal(arg(args, "-filter:a:0"), DOWNMIX_7_1_TO_5_1);
 });
 
 test("7.1 Atmos is still left alone — objects beat channel count", () => {

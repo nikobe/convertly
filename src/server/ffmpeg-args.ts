@@ -138,10 +138,11 @@ export function buildCommand(input: BuildInput): BuiltCommand {
     if (track.channels > MAX_CHANNELS) {
       // AC3 tops out at 5.1. ffmpeg's default fold leaves dialogue sitting too
       // low against the surrounds, so weight the merge explicitly instead.
-      args.push(
-        `-filter:a:${outputIndex}`,
-        "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|SL=0.707*SL+0.707*BL|SR=0.707*SR+0.707*BR",
-      );
+      //
+      // The output names must be BL/BR: in ffmpeg's "5.1" the surrounds are
+      // back channels. SL/SR only exist in "5.1(side)", and naming them here
+      // made the filter invalid — which failed every 7.1 file.
+      args.push(`-filter:a:${outputIndex}`, DOWNMIX_7_1_TO_5_1);
       notes.push(`Track ${track.index}: ${track.channels} channels downmixed to 5.1 with an explicit weighting.`);
     } else {
       // Never upmixed: a stereo source stays stereo.
@@ -153,10 +154,7 @@ export function buildCommand(input: BuildInput): BuiltCommand {
     const compatChannels = outputChannels(primary.channels);
     args.push(`-c:a:${compatIndex}`, "ac3", `-b:a:${compatIndex}`, String(ac3BitrateFor(compatChannels, preset.ac3Bitrate)));
     if (primary.channels > MAX_CHANNELS) {
-      args.push(
-        `-filter:a:${compatIndex}`,
-        "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|SL=0.707*SL+0.707*BL|SR=0.707*SR+0.707*BR",
-      );
+      args.push(`-filter:a:${compatIndex}`, DOWNMIX_7_1_TO_5_1);
     } else {
       args.push(`-ac:a:${compatIndex}`, String(compatChannels));
     }
@@ -224,6 +222,16 @@ function chooseEncoder(videoWork: boolean, width: number, height: number, preset
  * Five seconds costs a percent or two of bitrate and keeps both usable.
  */
 export const KEYFRAME_INTERVAL_SEC = 5;
+
+/**
+ * Explicit 7.1 to 5.1 fold.
+ *
+ * Output channels are BL/BR because ffmpeg's "5.1" uses back surrounds;
+ * SL/SR belong to "5.1(side)" and naming them as outputs makes the filter
+ * invalid. FC passes through untouched so dialogue keeps its level.
+ */
+export const DOWNMIX_7_1_TO_5_1 =
+  "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=0.707*BL+0.707*SL|BR=0.707*BR+0.707*SR";
 
 /** Forced-keyframe spacing in frames, derived from the source frame rate. */
 export function keyframeInterval(fps: number | null): { gop: number; min: number } {
