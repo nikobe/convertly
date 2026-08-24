@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { QueueItem, QueueSnapshot } from "../shared/queue.ts";
 import { FileName } from "./FileName.tsx";
 import { bytes } from "./format.ts";
@@ -9,6 +10,9 @@ function clock(seconds: number | null | undefined): string {
   const s = Math.floor(seconds % 60);
   return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m ${String(s).padStart(2, "0")}s`;
 }
+
+/** Rows visible before it needs expanding. */
+const COMPACT_ROWS = 4;
 
 const LABEL: Record<QueueItem["state"], string> = {
   queued: "Waiting",
@@ -35,8 +39,13 @@ export function QueuePanel({
   const finished = items.filter((i) => ["done", "failed", "cancelled"].includes(i.state)).length;
   const active = items.find((i) => i.state === "running");
 
+  // Compact by default: a queue is something you glance at, and it should not
+  // take the browser over. Only worth expanding once there is more than fits.
+  const [expanded, setExpanded] = useState(false);
+  const overflows = items.length > COMPACT_ROWS;
+
   return (
-    <section className="queue" aria-label="Conversion queue">
+    <section className={`queue${expanded ? " tall" : ""}`} aria-label="Conversion queue">
       <div className="qhead">
         <h2>Queue</h2>
         <span className="qsub">
@@ -49,6 +58,16 @@ export function QueuePanel({
           ? <button className="jbtn" onClick={onPause} disabled={!active && totals.queued === 0}>Pause</button>
           : <button className="jbtn go" onClick={onResume}>Resume</button>}
         {finished > 0 && <button className="jbtn quiet" onClick={onClear}>Clear {finished} finished</button>}
+        {overflows && (
+          <button
+            className="jbtn quiet"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            title={expanded ? "Back to a few rows" : `Show all ${items.length}`}
+          >
+            {expanded ? "Collapse" : `Expand · ${items.length}`}
+          </button>
+        )}
         <button className="jbtn quiet" onClick={onClose}>Close</button>
       </div>
 

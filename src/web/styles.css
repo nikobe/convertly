@@ -463,7 +463,14 @@ td.name button.expander .fname { flex: 1; }
   background: var(--panel);
   padding: 0.7rem 1rem 0.8rem;
   display: flex; flex-direction: column; gap: 0.5rem;
-  max-height: 45vh; overflow-y: auto;
+  /* Header plus four rows. Anything more scrolls until you expand it, so a
+     long queue never swallows the browser you are trying to work in. */
+  max-height: 11.5rem;
+  overflow-y: auto;
+}
+.queue.tall {
+  /* Take what is going, but always leave the listing something. */
+  max-height: min(70vh, 100vh - 14rem);
 }
 .qpaused { margin: 0; color: var(--warn); font-size: 11px; }
 .qempty { margin: 0; color: var(--text-faint); font-size: 12px; }
