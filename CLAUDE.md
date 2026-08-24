@@ -85,7 +85,16 @@ Step 5 matters because Sonarr only re-reads mediainfo when a filename changes,
 so an in-place swap otherwise leaves its database describing a file that no
 longer exists.
 
-**Never:** change the container (mkv→mp4 is a filename change); call
+**Container:** `planContainer` decides. MKV stays MKV and MP4/M4V/MOV keep
+their own container (with `-tag:v hvc1`, without which Apple players silently
+refuse HEVC). **AVI and the other legacy containers cannot carry HEVC at all**,
+so those become `.mkv` and the filename necessarily changes — the alternative
+was a Matroska file wearing an `.avi` extension, which is a lie on disk. That
+case is flagged in the UI before queueing, and the quality tokens in the name
+survive, so a rescan should re-import at the same quality.
+
+**Never:** gratuitously change the container (mkv→mp4 is a filename change for
+no reason); call
 `RenameMovie`/`RenameSeries` afterwards (a naming scheme containing
 `{MediaInfo VideoCodec}` will rewrite the file to say `h265` and re-score it);
 unmonitor items "to be safe"; or delete an original before quarantine expires.

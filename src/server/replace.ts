@@ -31,9 +31,20 @@ export interface ReplaceRecord {
  * Both files must be on the same volume so the swap is a rename rather than a
  * copy — a copy is neither atomic nor affordable on a 40 GB file.
  */
-export function replaceInPlace(sourcePath: string, tempPath: string, roots: Root[]): ReplaceRecord {
+export function replaceInPlace(
+  sourcePath: string,
+  tempPath: string,
+  roots: Root[],
+  /**
+   * Where the encode should end up. Defaults to the source path, which is the
+   * point of the whole protocol; it differs only when the source container
+   * cannot carry HEVC and the extension has to change.
+   */
+  destinationPath = sourcePath,
+): ReplaceRecord {
   const source = resolveWithinRoots(sourcePath, roots);
   const temp = resolveWithinRoots(tempPath, roots);
+  const destination = resolveWithinRoots(destinationPath, roots);
 
   if (!existsSync(source.path)) throw new ReplaceError(`Original has gone missing: ${source.path}`);
   if (!existsSync(temp.path)) throw new ReplaceError(`Encoded file is not there: ${temp.path}`);
@@ -58,7 +69,7 @@ export function replaceInPlace(sourcePath: string, tempPath: string, roots: Root
 
   renameSync(source.path, quarantinePath);
   try {
-    renameSync(temp.path, source.path);
+    renameSync(temp.path, destination.path);
   } catch (err) {
     // Put the original back rather than leaving the library with a hole.
     renameSync(quarantinePath, source.path);
@@ -68,14 +79,14 @@ export function replaceInPlace(sourcePath: string, tempPath: string, roots: Root
   // Restore identity: same name, same mtime, same mode. Nothing downstream
   // should be able to tell the file was touched except by reading it.
   try {
-    utimesSync(source.path, sourceStat.atime, sourceStat.mtime);
-    chmodSync(source.path, sourceStat.mode & 0o7777);
+    utimesSync(destination.path, sourceStat.atime, sourceStat.mtime);
+    chmodSync(destination.path, sourceStat.mode & 0o7777);
   } catch {
     // Not fatal — the swap succeeded and the name is what matters.
   }
 
   return {
-    livePath: source.path,
+    livePath: destination.path,
     quarantinePath,
     originalSize: sourceStat.size,
     newSize: tempStat.size,

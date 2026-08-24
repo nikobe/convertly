@@ -1,4 +1,5 @@
 import type { Probe, Assessment, Chip, AudioTrack, Conversion } from "../shared/types.ts";
+import { planContainer } from "../shared/container.ts";
 import {
   AUDIO_REPLACE, EFFICIENT_VIDEO, PREFERRED_LANGUAGES,
   planFor, primaryAudio, estimateBytes, keepEverything, subtitleBitrate, resolutionClass,
@@ -16,6 +17,7 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
   const empty: Assessment = {
     videoWork: false, audioWork: false, encoder: null, bitsPerPixel: null,
     estimatedBytes: null, savingBytes: null, chips, blockedReason: null, worthConverting: false,
+    containerChange: null,
   };
 
   if (probe.error) {
@@ -136,6 +138,16 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
     blockedReason = "Dolby Vision metadata does not survive this pipeline reliably, so this file is excluded.";
   }
 
+  // ── container ────────────────────────────────────────────────────────
+  const container = (plan.videoWork || plan.audioWork) ? planContainer(probe.path) : null;
+  if (container?.changed) {
+    chips.push({
+      label: `→ ${container.extension.replace(".", "").toUpperCase()}`,
+      tone: "warn",
+      title: container.reason ?? "The container has to change.",
+    });
+  }
+
   // ── estimate ─────────────────────────────────────────────────────────
   const chosen = selection ?? keepEverything(probe);
   const estimatedBytes = estimateBytes(probe, plan, chosen);
@@ -175,6 +187,7 @@ export function assess(probe: Probe, selection?: Selection, conversion?: Convers
     chips,
     blockedReason,
     worthConverting,
+    containerChange: container?.changed ? `${probe.path.slice(probe.path.lastIndexOf("."))} → ${container.extension}` : null,
   };
 }
 

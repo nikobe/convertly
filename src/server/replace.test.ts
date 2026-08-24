@@ -135,3 +135,27 @@ test("sweep never looks outside a quarantine directory", () => {
   assert.ok(existsSync(bystander), "a file outside quarantine must never be swept");
   assert.equal(readFileSync(bystander, "utf8"), "DO NOT TOUCH");
 });
+
+test("a container that cannot hold HEVC is renamed, not mislabelled", () => {
+  // An AVI source produced a Matroska file that then got renamed back to
+  // .avi — a lie on disk. HEVC cannot go in AVI, so the name has to change.
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "convertly-avi-")));
+  const movies = join(base, "Shows");
+  const tmp = join(movies, ".convertly-tmp");
+  mkdirSync(tmp, { recursive: true });
+  const original = join(movies, "ulysses.31.01-dvdrip.xvid.[merchant].avi");
+  writeFileSync(original, "OLD-AVI-CONTENT");
+  utimesSync(original, OLD_MTIME, OLD_MTIME);
+  const encoded = join(tmp, "ulysses.31.01-dvdrip.xvid.[merchant].123.mkv");
+  writeFileSync(encoded, "NEW");
+  const roots: Root[] = [{ id: "s", label: "Shows", path: movies }];
+
+  const destination = join(movies, "ulysses.31.01-dvdrip.xvid.[merchant].mkv");
+  const record = replaceInPlace(original, encoded, roots, destination);
+
+  assert.equal(record.livePath, destination);
+  assert.equal(readFileSync(destination, "utf8"), "NEW");
+  assert.equal(existsSync(original), false, "the .avi name must not survive alongside it");
+  assert.equal(Math.round(statSync(destination).mtimeMs), Math.round(OLD_MTIME.getTime()));
+  assert.equal(readFileSync(record.quarantinePath, "utf8"), "OLD-AVI-CONTENT");
+});

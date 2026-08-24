@@ -1,5 +1,6 @@
 import type { Probe, AudioTrack } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
+import { planContainer } from "../shared/container.ts";
 import {
   MAX_CHANNELS, ac3BitrateFor, outputChannels, usesHardware,
   primaryAudio, planFor, shouldReplaceAudio,
@@ -175,6 +176,10 @@ export function buildCommand(input: BuildInput): BuiltCommand {
 
   // ── subtitles ────────────────────────────────────────────────────────
   if (keptSubs.length > 0) args.push("-c:s", "copy");
+
+  // HEVC in an MP4-family container is unplayable on Apple devices without
+  // this tag, and silently so.
+  if (encoder !== "copy" && planContainer(outputPath).needsHvc1) args.push("-tag:v", "hvc1");
 
   args.push("-y", outputPath);
 

@@ -8,6 +8,7 @@ import { probeFile } from "./probe.ts";
 import type { Probe, Root } from "../shared/types.ts";
 import type { Preset } from "../shared/preset.ts";
 import type { Selection } from "../shared/estimate.ts";
+import { planContainer, withExtension } from "../shared/container.ts";
 import { formatBytes } from "../shared/format.ts";
 
 /** Encoding happens here, on the source's own volume, so the swap is a rename. */
@@ -58,8 +59,16 @@ export interface JobOptions {
 export async function runJob(options: JobOptions): Promise<JobResult> {
   const { probe, selection, preset, roots, ffmpegPath, ffprobePath, ffmpegVersion, onProgress, onStage, onEncodeStart, signal, dryRun } = options;
 
+  const container = planContainer(probe.path);
   const tempDir = join(dirname(probe.path), TEMP_DIRNAME);
-  const tempPath = join(tempDir, `${basename(probe.path, ".mkv")}.${Date.now()}.mkv`);
+  // Strip whatever extension the source has, not just ".mkv": an AVI source
+  // was producing "name.avi.<ts>.mkv", which then got renamed back to .avi
+  // and left a Matroska file wearing an AVI extension.
+  const stem = basename(withExtension(probe.path, ""), "");
+  const tempPath = join(tempDir, `${stem}.${Date.now()}${container.extension}`);
+  // Where it will actually live afterwards. Identical to the source unless the
+  // container cannot carry HEVC.
+  const finalPath = withExtension(probe.path, container.extension);
 
   const base = (outcome: JobOutcome, message: string, extra: Partial<JobResult> = {}): JobResult => ({
     outcome, message, checks: [], record: null, pendingPath: null,
@@ -150,11 +159,13 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
   }
 
   // ── swap ─────────────────────────────────────────────────────────────
-  const record = replaceInPlace(probe.path, tempPath, roots);
+  const record = replaceInPlace(probe.path, tempPath, roots, finalPath);
   const saved = record.originalSize - record.newSize;
   return base(
     "replaced",
-    `Replaced in place, ${formatBytes(saved)} saved. Original kept in quarantine.`,
+    `Replaced${container.changed ? ` as ${container.extension}` : " in place"}, ` +
+      `${formatBytes(saved)} saved. Original kept in quarantine.` +
+      (container.changed ? " The filename changed, so rescan Sonarr/Radarr." : ""),
     { ...withChecks, record },
   );
 }

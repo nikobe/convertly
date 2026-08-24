@@ -90,6 +90,8 @@ export interface Assessment {
    * videoWork/audioWork, which stay factual about what the file contains.
    */
   worthConverting: boolean;
+  /** Set when the output must change extension; the filename will change. */
+  containerChange: string | null;
 }
 
 export interface DirEntry {
