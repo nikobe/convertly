@@ -50,6 +50,7 @@ export function App() {
   const [note, setNote] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueSnapshot | null>(null);
   const [showQueue, setShowQueue] = useState(false);
+  const [live, setLive] = useState(true);
   const [preset, setPreset] = useState<Preset>(DEFAULT_PRESET);
   const [presetLoaded, setPresetLoaded] = useState(false);
   const [presetSaving, setPresetSaving] = useState(false);
@@ -73,11 +74,53 @@ export function App() {
     }
   }, []);
 
-  // One live stream for the whole queue. SSE reconnects on its own.
+  /**
+   * One live stream for the whole queue, with a poll behind it.
+   *
+   * EventSource is supposed to reconnect by itself, but after a server restart
+   * the page sat showing a stale queue until it was reloaded by hand — a queue
+   * that quietly stops updating is worse than one that admits it. So: track
+   * whether the stream is live, say so, and poll while it is not.
+   */
   useEffect(() => {
-    const source = new EventSource("/api/queue/events");
-    source.onmessage = (event) => setQueue(JSON.parse(event.data) as QueueSnapshot);
-    return () => source.close();
+    let source: EventSource | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    let closed = false;
+
+    const startPolling = () => {
+      if (poll) return;
+      poll = setInterval(() => {
+        api.queue().then(setQueue).catch(() => undefined);
+      }, 5000);
+    };
+    const stopPolling = () => {
+      if (!poll) return;
+      clearInterval(poll);
+      poll = null;
+    };
+
+    const connect = () => {
+      if (closed) return;
+      source = new EventSource("/api/queue/events");
+      source.onopen = () => { setLive(true); stopPolling(); };
+      source.onmessage = (event) => setQueue(JSON.parse(event.data) as QueueSnapshot);
+      source.onerror = () => {
+        setLive(false);
+        startPolling();
+        // Some browsers stop retrying entirely; rebuild rather than trust it.
+        if (source && source.readyState === EventSource.CLOSED) {
+          source.close();
+          setTimeout(connect, 3000);
+        }
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      stopPolling();
+      source?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -241,6 +284,7 @@ export function App() {
         preset={preset}
         saving={presetSaving}
         queue={queue}
+        live={live}
         onOpenQueue={() => setShowQueue((v) => !v)}
         onOpenQuality={() => setShowQuality((v) => !v)}
       />
@@ -388,12 +432,13 @@ export function App() {
 }
 
 function Hud({
-  health, preset, saving, queue, onOpenQueue, onOpenQuality,
+  health, preset, saving, queue, live, onOpenQueue, onOpenQuality,
 }: {
   health: HealthReport | null;
   preset: Preset;
   saving: boolean;
   queue: QueueSnapshot | null;
+  live: boolean;
   onOpenQueue: () => void;
   onOpenQuality: () => void;
 }) {
@@ -457,6 +502,7 @@ function Hud({
                 : queue && !queue.running ? "paused" : "idle"}
         </span>
         {needsYou > 0 && <span className="needsyou">{needsYou} to review</span>}
+        {!live && <span className="stale" title="Live updates dropped — polling instead">polling</span>}
       </button>
 
       <button className="qopen" onClick={onOpenQuality} title="Quality settings for the next encode">
