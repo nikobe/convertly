@@ -15,7 +15,7 @@ export interface GovernorConfig {
    * gates on machdep.xcpm.cpu_thermal_level; null means ignore it, which is
    * the default because that reading tracks load rather than throttling.
    */
-  thermal: { enabled: boolean; maxLevel: number | null };
+  thermal: { enabled: boolean; maxLevel: number | null; minSpeedLimit: number };
   /** Stop encoding while someone is watching something. */
   playback: { enabled: boolean };
   /** Refuse to start without room for the output. */
@@ -31,7 +31,10 @@ export const DEFAULT_GOVERNORS: GovernorConfig = {
   // tracks how busy the CPU is, not whether it is being held back, so gating
   // on it suspended a healthy encode 28% of the time. CPU_Speed_Limit is the
   // OS saying it has actually cut the CPU, and that is what we act on.
-  thermal: { enabled: true, maxLevel: null },
+  // Below this, the OS has cut the CPU hard enough that pushing on is doing
+  // more heating than encoding. Mild trimming is the OS managing itself, and
+  // 92% of full speed beats 0% — suspending on that made things worse.
+  thermal: { enabled: true, maxLevel: null, minSpeedLimit: 70 },
   playback: { enabled: true },
   // Enough that a drive is never driven to completely full, which upsets the
   // OS and any media server on it — not so much that a small file is blocked
@@ -134,9 +137,11 @@ export function isThrottling(
   recentLevels: number[],
   maxLevel: number | null,
   speedLimit: number | null,
+  minSpeedLimit = 70,
 ): boolean {
-  // The authoritative answer: the OS has cut the CPU.
-  if (speedLimit !== null && speedLimit < 100) return true;
+  // The OS trimming the clock is it doing its job; encoding at 92% of full
+  // speed is better than not encoding. Only step aside when it has cut hard.
+  if (speedLimit !== null && speedLimit < minSpeedLimit) return true;
   // Opt-in only. This reading sat at 100 for a whole encode on hardware the
   // OS never throttled, so believing it costs throughput for nothing.
   if (maxLevel === null) return false;
