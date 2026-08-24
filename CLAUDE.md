@@ -113,11 +113,21 @@ software at 1080p, which is why software wins there; at 4K, software x265 is
 Derive ETAs from rolling measured throughput on the running job, never from
 the table above.
 
-**The table also flatters itself: it was measured on synthetic sources.** Real
-grainy material is materially harder. A 1920×960 WEBDL episode encoded at
-`libx265 medium crf20` on an Apple M1 ran at 0.56× realtime — on the faster of
-the two machines. Treat ~0.6× sustained as an optimistic ceiling for real
-content, which is another reason ETAs must come from the running job.
+**Measured on the real host, 23–24 Aug 2026.** Four films and episodes,
+`libx265 medium crf22`, four hours of continuous encoding sampled every 30s:
+
+| | |
+| --- | --- |
+| Sustained rate | ~0.6× realtime mean (depressed ~31% by a governor bug at the time) |
+| `CPU_Speed_Limit` | dropped to **80** — the enclosure does genuinely throttle |
+| `machdep.xcpm.cpu_thermal_level` | median 100, **max 109** — tracks load, not throttling |
+| Size reduction | 63% to 89% |
+| VMAF | 94.33 to 97.31, floor 93 |
+
+The throttling is real, so the thermal governor earns its place — but only on
+`CPU_Speed_Limit`. The level reading exceeds 100 and sits pegged whenever the
+CPU is busy, which is exactly when it would be consulted. ETAs must still come
+from the running job.
 
 ### Host gotchas
 
