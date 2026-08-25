@@ -26,6 +26,21 @@ export interface Deps {
   governors: Governors;
 }
 
+/** Long-lived event streams, so they can be ended deliberately on shutdown. */
+export const openStreams = new Set<{ end: () => void; destroy: () => void }>();
+
+export function closeOpenStreams(): void {
+  for (const stream of openStreams) {
+    try {
+      stream.end();
+      stream.destroy();
+    } catch {
+      /* already gone */
+    }
+  }
+  openStreams.clear();
+}
+
 export async function registerApi(app: FastifyInstance, deps: Deps): Promise<void> {
   const { config, store, scanner, ffprobe, ffmpeg, queue, integrations, governors } = deps;
 
@@ -204,11 +219,17 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     const send = (snapshot: unknown) => reply.raw.write(`data: ${JSON.stringify(snapshot)}\n\n`);
     send(queue.snapshot());
     const unsubscribe = queue.subscribe(send);
+    // Held so shutdown can end them. Fastify's close waits for open
+    // connections, and an event stream never closes by itself — which left a
+    // server alive after SIGTERM, still working the queue, while a second one
+    // started up beside it.
+    openStreams.add(reply.raw);
     // Idle streams get dropped by proxies and sleeping laptops alike.
     const keepAlive = setInterval(() => reply.raw.write(": ping\n\n"), 20_000);
     request.raw.on("close", () => {
       clearInterval(keepAlive);
       unsubscribe();
+      openStreams.delete(reply.raw);
     });
     return reply;
   });

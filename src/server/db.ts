@@ -31,6 +31,9 @@ export class Store {
     mkdirSync(dataDir, { recursive: true });
     this.db = new DatabaseSync(join(dataDir, "convertly.db"));
     this.db.exec("PRAGMA journal_mode = WAL");
+    // Wait for a writer rather than throwing. WAL makes contention rare, but
+    // "database is locked" killed the process outright when it happened.
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.db.exec("PRAGMA foreign_keys = ON");
     this.migrate();

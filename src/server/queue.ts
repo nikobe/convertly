@@ -514,11 +514,16 @@ export class Queue {
         return;
       }
     } catch (err) {
-      this.deps.store.updateQueueItem(row.id, {
-        state: "failed",
-        message: `${(err as Error).message} — the original was not touched.`,
-        finished_at: Date.now(),
-      });
+      // Recording the failure must not itself be able to end the process.
+      try {
+        this.deps.store.updateQueueItem(row.id, {
+          state: "failed",
+          message: `${(err as Error).message} — the original was not touched.`,
+          finished_at: Date.now(),
+        });
+      } catch {
+        /* the row is gone or the store is unhappy; the file is still safe */
+      }
     } finally {
       this.runningId = null;
       this.controller = null;

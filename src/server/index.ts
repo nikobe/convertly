@@ -6,7 +6,7 @@ import { loadConfig, ConfigError } from "./config.ts";
 import { Store } from "./db.ts";
 import { Scanner } from "./scanner.ts";
 import { locate, type Binary } from "./binaries.ts";
-import { registerApi } from "./routes/api.ts";
+import { registerApi, closeOpenStreams } from "./routes/api.ts";
 import { parseClientRules, isClientAllowed, isExposedHost, reachableUrls } from "./access.ts";
 import { Queue } from "./queue.ts";
 import { Integrations } from "./integrations.ts";
@@ -92,9 +92,18 @@ async function main(): Promise<void> {
     // Stop the encoder before anything else: an orphaned ffmpeg outlives the
     // process that started it and there is nothing left to reap it.
     queue.shutdown();
+    closeOpenStreams();
+    // A stuck close is worse than an abrupt one: the process stayed alive,
+    // kept draining the queue, and a deploy started a second server beside it.
+    const forced = setTimeout(() => process.exit(0), 4000);
+    forced.unref?.();
     await new Promise((resolve) => setTimeout(resolve, 300));
-    await app.close();
-    store.close();
+    try {
+      await app.close();
+      store.close();
+    } catch {
+      /* going down regardless */
+    }
     process.exit(0);
   };
   process.on("SIGINT", close);
