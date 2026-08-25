@@ -85,7 +85,14 @@ async function main(): Promise<void> {
     });
   }
 
+  let closing = false;
   const close = async () => {
+    if (closing) return;
+    closing = true;
+    // Stop the encoder before anything else: an orphaned ffmpeg outlives the
+    // process that started it and there is nothing left to reap it.
+    queue.shutdown();
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await app.close();
     store.close();
     process.exit(0);

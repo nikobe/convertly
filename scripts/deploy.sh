@@ -75,11 +75,21 @@ echo "· building"
 npm run build --silent >/dev/null
 
 # ── restart ─────────────────────────────────────────────────────────────
+# SIGTERM so the server can stop its encoder; SIGKILL would orphan the ffmpeg.
 pkill -f "node src/server/index.ts" 2>/dev/null || true
-for _ in 1 2 3 4 5 6 7 8 9 10; do
+for _ in $(seq 1 20); do
   pgrep -f "node src/server/index.ts" >/dev/null || break
   sleep 0.5
 done
+
+# Anything of ours still encoding is an orphan. Only our own temp paths are
+# matched, so a media server's own transcodes are left well alone.
+ORPHANS=$(pgrep -fl "ffmpeg" 2>/dev/null | grep "convertly-tmp" | awk '{print $1}' || true)
+if [ -n "$ORPHANS" ]; then
+  echo "· reaping $(echo "$ORPHANS" | wc -l | tr -d ' ') orphaned encode(s) from a previous run"
+  echo "$ORPHANS" | xargs kill 2>/dev/null || true
+  sleep 1
+fi
 
 mkdir -p "$REPO/data"
 nohup node src/server/index.ts > "$REPO/data/server.log" 2>&1 &

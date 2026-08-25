@@ -236,6 +236,23 @@ export class Queue {
     this.controller?.abort();
   }
 
+  /**
+   * Stop cleanly on the way out.
+   *
+   * Killing the server left its ffmpeg orphaned: it carried on encoding for
+   * as long as the file took, competing with the replacement server for the
+   * same six cores and writing to a temp file nobody would ever collect.
+   */
+  shutdown(): void {
+    this.paused = true;
+    this.stopRecheck();
+    this.controller?.abort();
+    // abort() resumes a suspended process first, then kills it; belt and
+    // braces in case the job was mid-suspend when the signal arrived.
+    this.encode?.resume();
+    this.encode = null;
+  }
+
   /** Accept a held encode: swap it in without re-encoding. */
   accept(id: string): void {
     const row = this.deps.store.getQueueItem(id);
