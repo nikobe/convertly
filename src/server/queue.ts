@@ -69,7 +69,9 @@ export class Queue {
         queued: queued.length,
         sourceBytes: queued.reduce((n, i) => n + i.sourceBytes, 0),
         estimatedBytes: queued.reduce((n, i) => n + (i.estimatedBytes ?? 0), 0),
-        savedBytes: items.reduce((n, i) => n + (i.savedBytes ?? 0), 0),
+        // From the conversions ledger, not the rows: replaced files leave the
+        // queue, and the running total must survive that.
+        savedBytes: this.deps.store.savings().bytes,
       },
     };
   }
@@ -253,15 +255,11 @@ export class Queue {
       ffmpegVersion: this.deps.ffmpegVersion,
       quarantinePath: record.quarantinePath,
     });
-    this.deps.store.updateQueueItem(id, {
-      state: "done",
-      saved_bytes: saved,
-      pending_path: null,
-      message: `Replaced after review, ${formatBytes(saved)} saved.`,
-      finished_at: Date.now(),
-    });
-    this.emit();
+    // Off the list: the queue should show what still needs attention, not a
+    // growing history of things that went fine. The ledger keeps the record.
     void this.notify(id, row.path, `Replaced after review, ${formatBytes(saved)} saved.`);
+    this.deps.store.removeQueueItem(id);
+    this.emit();
   }
 
   /**
@@ -491,7 +489,13 @@ export class Queue {
         finished_at: Date.now(),
       });
 
-      if (state === "done") void this.notify(row.id, probe.path, result.message);
+      if (state === "done") {
+        void this.notify(row.id, probe.path, result.message);
+        // Same reasoning as accept: a replaced file needs nothing from you.
+        this.deps.store.removeQueueItem(row.id);
+        this.emit();
+        return;
+      }
     } catch (err) {
       this.deps.store.updateQueueItem(row.id, {
         state: "failed",

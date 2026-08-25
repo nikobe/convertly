@@ -114,7 +114,10 @@ export function QueuePanel({
       )}
 
       {items.length === 0 && (
-        <p className="qempty">Nothing queued. Select files in the browser and add them.</p>
+        <p className="qempty">
+          Nothing outstanding. Replaced files leave the queue — the total above is the running
+          ledger, and originals stay in quarantine for 14 days.
+        </p>
       )}
 
       <div className="qlist">

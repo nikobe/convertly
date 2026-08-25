@@ -281,6 +281,7 @@ export class Store {
     return Number(result.changes) > 0;
   }
 
+  /** A no-op when the row has already gone, which is normal after a replace. */
   updateQueueItem(id: string, patch: Partial<QueueRow>): void {
     const keys = Object.keys(patch).filter((k) => k !== "id");
     if (keys.length === 0) return;
