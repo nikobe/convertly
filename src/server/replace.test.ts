@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
 import {
-  replaceInPlace, restore, sweepQuarantine, ReplaceError, QUARANTINE_DIRNAME,
+  replaceInPlace, restore, sweepQuarantine, quarantinedAt, ReplaceError, QUARANTINE_DIRNAME,
 } from "./replace.ts";
 import { PathNotAllowedError } from "./paths.ts";
 import type { Root } from "../shared/types.ts";
@@ -158,4 +158,33 @@ test("a container that cannot hold HEVC is renamed, not mislabelled", () => {
   assert.equal(existsSync(original), false, "the .avi name must not survive alongside it");
   assert.equal(Math.round(statSync(destination).mtimeMs), Math.round(OLD_MTIME.getTime()));
   assert.equal(readFileSync(record.quarantinePath, "utf8"), "OLD-AVI-CONTENT");
+});
+
+test("retention is judged by the stamp we wrote, not by file metadata", () => {
+  // On the external volumes this runs against, renaming into quarantine
+  // leaves ctime untouched — so a 2018 release read as seven years old and
+  // was swept minutes after being quarantined.
+  const now = Date.parse("2026-08-25T23:00:00.000Z");
+  assert.equal(quarantinedAt("2026-08-25T18-01-54-566Z__Some Film.mkv"), Date.parse("2026-08-25T18:01:54.566Z"));
+  assert.ok(quarantinedAt("2026-08-25T18-01-54-566Z__Some Film.mkv")! > now - 14 * 864e5, "today is inside the window");
+  assert.ok(quarantinedAt("2026-07-01T10-00-00-000Z__Old.mkv")! < now - 14 * 864e5, "seven weeks ago is outside it");
+});
+
+test("anything without our stamp is never swept", () => {
+  // A file we did not put there must not be deleted on a guess.
+  for (const name of ["Some Film.mkv", "backup.mkv", "2026-08-25__no-time.mkv", ""]) {
+    assert.equal(quarantinedAt(name), null, name);
+  }
+});
+
+test("a freshly quarantined original survives a sweep even with an ancient ctime", () => {
+  const { original, encoded, roots } = fixture();
+  const record = replaceInPlace(original, encoded, roots);
+  // Simulate the volume behaviour: metadata still says years ago.
+  const ancient = new Date("2018-10-27T02:03:00Z");
+  utimesSync(record.quarantinePath, ancient, ancient);
+
+  const result = sweepQuarantine(roots, 14);
+  assert.deepEqual(result.removed, [], "it was quarantined seconds ago");
+  assert.equal(existsSync(record.quarantinePath), true);
 });

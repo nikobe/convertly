@@ -63,7 +63,11 @@ export function replaceInPlace(
   const quarantineDir = join(dirname(source.path), QUARANTINE_DIRNAME);
   mkdirSync(quarantineDir, { recursive: true });
 
-  // Timestamped so re-converting the same title twice cannot collide.
+  // Timestamped so re-converting the same title twice cannot collide — and
+  // so the retention sweep has a trustworthy date to work from. File metadata
+  // is not trustworthy here: on the external volumes this runs against, a
+  // rename leaves ctime untouched, so a freshly quarantined original can
+  // claim to be years old.
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const quarantinePath = join(quarantineDir, `${stamp}__${basename(source.path)}`);
 
@@ -129,11 +133,31 @@ export interface SweepResult {
 }
 
 /**
+ * When was this quarantined? From the name we gave it, not the filesystem.
+ *
+ * ctime looked like the right answer and is not: renaming a file into
+ * quarantine does not update it on an exFAT or network volume, so an original
+ * from a 2018 release read as seven years old and was swept on the next
+ * restart — minutes after being quarantined, with the retention window
+ * nowhere near expired.
+ */
+export function quarantinedAt(fileName: string): number | null {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)__/.exec(fileName);
+  if (!match?.[1]) return null;
+  const iso = match[1].replace(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/,
+    "$1-$2-$3T$4:$5:$6.$7Z",
+  );
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * Delete quarantined originals past the retention window.
  *
  * Deliberately conservative: it only ever looks inside directories named
- * `.convertly-quarantine` under a configured root, and only at files older
- * than the window.
+ * `.convertly-quarantine` under a configured root, only at files whose name
+ * carries a stamp we wrote, and only past the window.
  */
 export function sweepQuarantine(
   roots: Root[],
@@ -157,8 +181,15 @@ export function sweepQuarantine(
           continue;
         }
         if (!stat.isFile()) continue;
-        // Age from when it was quarantined, not the preserved original mtime.
-        if (stat.ctimeMs > cutoff) {
+
+        const quarantined = quarantinedAt(name);
+        if (quarantined === null) {
+          // Not something we put here, or a name we no longer recognise.
+          // Never delete on a guess.
+          kept++;
+          continue;
+        }
+        if (quarantined > cutoff) {
           kept++;
           continue;
         }

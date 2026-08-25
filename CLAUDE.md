@@ -317,7 +317,12 @@ outcome keeps the encode so accepting it later costs no re-encode.
   directory literally named `.convertly-quarantine`, and there is a test
   asserting a bystander file is never swept.
 
-Quarantine retention is 14 days.
+Quarantine retention is 14 days, judged by the timestamp in the quarantined
+filename — never by file metadata. Renaming a file into quarantine does not
+update `ctime` on exFAT or network volumes, so originals from old releases
+read as years old and were swept on the next restart, minutes after being
+quarantined. A file in a quarantine directory without a stamp we wrote is
+never deleted.
 
 ## Design
 
