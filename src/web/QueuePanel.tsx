@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { QueueItem, QueueSnapshot } from "../shared/queue.ts";
+import { isRetryable, type QueueItem, type QueueSnapshot } from "../shared/queue.ts";
 import { FileName } from "./FileName.tsx";
 import { bytes } from "./format.ts";
 
@@ -24,7 +24,7 @@ const LABEL: Record<QueueItem["state"], string> = {
 };
 
 export function QueuePanel({
-  snapshot, onAcceptAll, onPause, onResume, onRemove, onAccept, onDiscard, onClear, onClose,
+  snapshot, onAcceptAll, onPause, onResume, onRemove, onAccept, onDiscard, onRetry, onClear, onClose,
 }: {
   snapshot: QueueSnapshot;
   onAcceptAll: () => void;
@@ -33,6 +33,7 @@ export function QueuePanel({
   onRemove: (id: string) => void;
   onAccept: (id: string) => void;
   onDiscard: (id: string) => void;
+  onRetry: (id: string) => void;
   onClear: () => void;
   onClose: () => void;
 }) {
@@ -128,6 +129,7 @@ export function QueuePanel({
             onRemove={() => onRemove(item.id)}
             onAccept={() => onAccept(item.id)}
             onDiscard={() => onDiscard(item.id)}
+            onRetry={() => onRetry(item.id)}
           />
         ))}
       </div>
@@ -160,13 +162,17 @@ function Delta({ saved, source }: { saved: number; source: number }) {
 }
 
 function Row({
-  item, onRemove, onAccept, onDiscard,
+  item, onRemove, onAccept, onDiscard, onRetry,
 }: {
   item: QueueItem;
   onRemove: () => void;
   onAccept: () => void;
   onDiscard: () => void;
+  onRetry: () => void;
 }) {
+  // Most failures are circumstance rather than the file; the ones that are not
+  // get no button, because retrying would show the same message.
+  const canRetry = (item.state === "failed" || item.state === "cancelled") && isRetryable(item.message);
   const p = item.progress;
   const stage = item.stage;
   const pct = stage
@@ -206,7 +212,9 @@ function Row({
             <button className="jbtn" onClick={onDiscard}>Discard</button>
           </>
         )}
-        {(item.state === "queued" || item.state === "running") && (
+        {canRetry && <button className="jbtn go" onClick={onRetry}>Retry</button>}
+        {(item.state === "queued" || item.state === "running" || item.state === "failed"
+          || item.state === "cancelled") && (
           <button className="jbtn quiet" onClick={onRemove}>
             {item.state === "running" ? "Cancel" : "Remove"}
           </button>

@@ -253,6 +253,16 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     return reply.code(204).send();
   });
 
+  app.post("/api/queue/:id/retry", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      queue.retry(id);
+      return queue.snapshot();
+    } catch (err) {
+      return reply.code(409).send({ error: (err as Error).message });
+    }
+  });
+
   for (const action of ["accept", "discard"] as const) {
     app.post(`/api/queue/:id/${action}`, async (request, reply) => {
       const { id } = request.params as { id: string };

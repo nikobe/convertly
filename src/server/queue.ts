@@ -13,7 +13,7 @@ import type { Preset } from "../shared/preset.ts";
 import type { Check } from "../shared/check.ts";
 import { keepEverything, planFor, estimateBytes, type Selection } from "../shared/estimate.ts";
 import { formatBytes } from "../shared/format.ts";
-import type { QueueItem, QueueSnapshot, QueueState } from "../shared/queue.ts";
+import { isRetryable, type QueueItem, type QueueSnapshot, type QueueState } from "../shared/queue.ts";
 import type { Progress } from "./encoder.ts";
 import type { JobStage } from "../shared/job.ts";
 
@@ -306,6 +306,37 @@ export class Queue {
     }
     this.emit();
     return { accepted, skipped };
+  }
+
+  /**
+   * Put a failed item back in the queue.
+   *
+   * Re-probed from scratch when it runs, so a file that has changed since —
+   * or a bug that has been fixed since — is picked up properly.
+   */
+  retry(id: string): void {
+    const row = this.deps.store.getQueueItem(id);
+    if (!row) throw new Error("No such item.");
+    if (row.state !== "failed" && row.state !== "cancelled") {
+      throw new Error("Only a failed or stopped item can be retried.");
+    }
+    if (!isRetryable(row.message)) {
+      throw new Error("That failure would happen again in exactly the same way.");
+    }
+    // Any half-written encode from the failed attempt is of no use now.
+    if (row.pending_path && existsSync(row.pending_path)) rmSync(row.pending_path, { force: true });
+
+    this.deps.store.updateQueueItem(id, {
+      state: "queued",
+      message: "Waiting — retry",
+      checks_json: "[]",
+      pending_path: null,
+      saved_bytes: null,
+      started_at: null,
+      finished_at: null,
+    });
+    this.emit();
+    void this.drain();
   }
 
   /** Throw a held encode away and keep the original. */

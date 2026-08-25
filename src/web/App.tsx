@@ -416,6 +416,7 @@ export function App() {
           onRemove={(id) => api.removeFromQueue(id).catch((e: Error) => setNote(e.message))}
           onAccept={(id) => api.queueItemAction(id, "accept").then(() => go(listing?.path)).catch((e: Error) => setNote(e.message))}
           onDiscard={(id) => api.queueItemAction(id, "discard").catch((e: Error) => setNote(e.message))}
+          onRetry={(id) => api.queueItemAction(id, "retry").catch((e: Error) => setNote(e.message))}
           onClose={() => setShowQueue(false)}
         />
       )}

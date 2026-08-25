@@ -68,7 +68,7 @@ export const api = {
     return res.json() as Promise<{ accepted: number; skipped: { name: string; reason: string }[] }>;
   },
 
-  async queueItemAction(id: string, action: "accept" | "discard"): Promise<void> {
+  async queueItemAction(id: string, action: "accept" | "discard" | "retry"): Promise<void> {
     const res = await fetch(`/api/queue/${id}/${action}`, { method: "POST" });
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
