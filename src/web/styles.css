@@ -504,6 +504,9 @@ td.name button.expander .fname { flex: 1; }
 .qname { flex: 1 1 14rem; min-width: 0; color: var(--text); }
 .qsize { flex: none; font-variant-numeric: tabular-nums; color: var(--text-dim); white-space: nowrap; }
 .qsaved { color: var(--ok); }
+/* A conversion that made the file bigger has to be unmissable: those were
+   being accepted at review because a negative read as a saving. */
+.qgrew { color: var(--crit); font-weight: 400; }
 .qest { color: var(--amber-dim); }
 .qbar { flex: 1 1 7rem; height: 10px; border: 1px solid var(--amber-dim); background: var(--ground); }
 .qbar i { display: block; height: 100%; background: var(--amber); transition: width .4s linear; }

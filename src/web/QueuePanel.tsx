@@ -98,6 +98,30 @@ export function QueuePanel({
   );
 }
 
+/**
+ * The change in size, as a percentage.
+ *
+ * The message beside it already carries the megabytes, so repeating them here
+ * was noise — and a negative saving rendered as "−-6.1 MB", which reads as a
+ * saving at a glance. A file that grew now says so in red.
+ */
+function Delta({ saved, source }: { saved: number; source: number }) {
+  const percent = (saved / source) * 100;
+  const grew = percent < 0;
+  return (
+    <span
+      className={grew ? " qgrew" : " qsaved"}
+      title={grew
+        ? `${bytes(-saved)} bigger than the original`
+        : `${bytes(saved)} smaller than the original`}
+    >
+      {" "}
+      {grew ? "+" : "−"}
+      {Math.abs(percent).toFixed(percent !== 0 && Math.abs(percent) < 10 ? 1 : 0)}%
+    </span>
+  );
+}
+
 function Row({
   item, onRemove, onAccept, onDiscard,
 }: {
@@ -118,8 +142,11 @@ function Row({
       <span className="qname" title={item.path}><FileName name={item.name} tailLength={20} /></span>
       <span className="qsize">
         {bytes(item.sourceBytes)}
-        {item.savedBytes ? <span className="qsaved"> −{bytes(item.savedBytes)}</span>
-          : item.estimatedBytes ? <span className="qest"> → {bytes(item.estimatedBytes)}</span> : null}
+        {item.savedBytes !== null && item.savedBytes !== undefined && item.sourceBytes > 0 ? (
+          <Delta saved={item.savedBytes} source={item.sourceBytes} />
+        ) : item.estimatedBytes ? (
+          <span className="qest"> → {bytes(item.estimatedBytes)}</span>
+        ) : null}
       </span>
 
       {item.state === "running" && (
