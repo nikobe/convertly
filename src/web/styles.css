@@ -531,3 +531,10 @@ td.name button.expander .fname { flex: 1; }
 .hud .queuebtn.held { border-color: var(--warn); color: var(--warn); }
 
 .hud .stale { color: var(--warn); margin-left: 0.35rem; }
+
+.qwarnrow {
+  margin: 0; padding: 0.3rem 0.4rem; font-size: 11px;
+  color: var(--warn); border-left: 2px solid var(--warn);
+  background: rgba(224, 138, 60, 0.07);
+}
+.qwarnrow strong { color: var(--crit); font-weight: 400; }

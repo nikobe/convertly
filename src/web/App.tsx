@@ -398,6 +398,18 @@ export function App() {
       {showQueue && queue && (
         <QueuePanel
           snapshot={queue}
+          onAcceptAll={() =>
+            api.acceptAll()
+              .then(({ accepted, skipped }) => {
+                setNote(
+                  skipped.length === 0
+                    ? `Accepted ${accepted}.`
+                    : `Accepted ${accepted} · ${skipped.length} left alone (${skipped[0]!.reason})`,
+                );
+                void go(listing?.path);
+              })
+              .catch((e: Error) => setNote(e.message))
+          }
           onPause={() => api.queueAction("pause").catch((e: Error) => setNote(e.message))}
           onResume={() => api.queueAction("resume").catch((e: Error) => setNote(e.message))}
           onClear={() => api.queueAction("clear").catch((e: Error) => setNote(e.message))}

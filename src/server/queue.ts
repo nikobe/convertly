@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { runJob, freshProbe } from "./pipeline.ts";
 import { replaceInPlace } from "./replace.ts";
@@ -264,6 +264,35 @@ export class Queue {
     void this.notify(id, row.path, `Replaced after review, ${formatBytes(saved)} saved.`);
   }
 
+  /**
+   * Accept every held encode that actually shrank its file.
+   *
+   * Deliberately not "accept everything": eleven of forty-eight episodes in
+   * one run produced larger files, and swallowing those in a bulk action is
+   * exactly the mistake a bulk action makes easy. Those stay individual
+   * decisions.
+   */
+  acceptAll(): { accepted: number; skipped: { name: string; reason: string }[] } {
+    const skipped: { name: string; reason: string }[] = [];
+    let accepted = 0;
+
+    for (const row of this.deps.store.listQueue()) {
+      if (row.state !== "review" || !row.pending_path) continue;
+      if ((row.saved_bytes ?? 0) <= 0) {
+        skipped.push({ name: row.name, reason: "would make the file bigger" });
+        continue;
+      }
+      try {
+        this.accept(row.id);
+        accepted++;
+      } catch (err) {
+        skipped.push({ name: row.name, reason: (err as Error).message });
+      }
+    }
+    this.emit();
+    return { accepted, skipped };
+  }
+
   /** Throw a held encode away and keep the original. */
   discard(id: string): void {
     const row = this.deps.store.getQueueItem(id);
@@ -429,7 +458,17 @@ export class Queue {
         : result.outcome === "cancelled" ? "cancelled"
         : "failed";
 
-      const saved = result.record ? result.record.originalSize - result.record.newSize : null;
+      // On review the encode exists but nothing has been swapped, so measure
+      // the file we are holding: the real change has to be visible *before*
+      // anyone accepts it, not after.
+      let saved: number | null = result.record ? result.record.originalSize - result.record.newSize : null;
+      if (saved === null && result.pendingPath && existsSync(result.pendingPath)) {
+        try {
+          saved = probe.size - statSync(result.pendingPath).size;
+        } catch {
+          saved = null;
+        }
+      }
       if (result.record) {
         this.deps.store.recordConversion({
           path: probe.path,

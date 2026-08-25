@@ -62,6 +62,12 @@ export const api = {
     if (!res.ok) throw new Error(`Could not ${action} the queue.`);
   },
 
+  async acceptAll(): Promise<{ accepted: number; skipped: { name: string; reason: string }[] }> {
+    const res = await fetch("/api/queue/accept-all", { method: "POST" });
+    if (!res.ok) throw new Error("Could not accept those.");
+    return res.json() as Promise<{ accepted: number; skipped: { name: string; reason: string }[] }>;
+  },
+
   async queueItemAction(id: string, action: "accept" | "discard"): Promise<void> {
     const res = await fetch(`/api/queue/${id}/${action}`, { method: "POST" });
     if (!res.ok) {

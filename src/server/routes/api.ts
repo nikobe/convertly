@@ -213,6 +213,8 @@ export async function registerApi(app: FastifyInstance, deps: Deps): Promise<voi
     return reply;
   });
 
+  app.post("/api/queue/accept-all", async () => queue.acceptAll());
+
   app.post("/api/queue/pause", async () => { queue.pause(); return queue.snapshot(); });
   app.post("/api/queue/resume", async () => { queue.resume(); return queue.snapshot(); });
   app.post("/api/queue/clear", async () => ({ removed: queue.clearFinished() }));

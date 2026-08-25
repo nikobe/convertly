@@ -24,9 +24,10 @@ const LABEL: Record<QueueItem["state"], string> = {
 };
 
 export function QueuePanel({
-  snapshot, onPause, onResume, onRemove, onAccept, onDiscard, onClear, onClose,
+  snapshot, onAcceptAll, onPause, onResume, onRemove, onAccept, onDiscard, onClear, onClose,
 }: {
   snapshot: QueueSnapshot;
+  onAcceptAll: () => void;
   onPause: () => void;
   onResume: () => void;
   onRemove: (id: string) => void;
@@ -42,7 +43,12 @@ export function QueuePanel({
   // Compact by default: a queue is something you glance at, and it should not
   // take the browser over. Only worth expanding once there is more than fits.
   const [expanded, setExpanded] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
   const overflows = items.length > COMPACT_ROWS;
+
+  const reviews = items.filter((i) => i.state === "review");
+  const acceptable = reviews.filter((i) => (i.savedBytes ?? 0) > 0);
+  const wouldGrow = reviews.length - acceptable.length;
 
   return (
     <section className={`queue${expanded ? " tall" : ""}`} aria-label="Conversion queue">
@@ -57,6 +63,27 @@ export function QueuePanel({
         {running
           ? <button className="jbtn" onClick={onPause} disabled={!active && totals.queued === 0}>Pause</button>
           : <button className="jbtn go" onClick={onResume}>Resume</button>}
+        {acceptable.length > 1 && (
+          <button
+            className="jbtn go"
+            onClick={() => {
+              // Replacing this many originals in one click deserves a beat,
+              // the same as the downscale control.
+              if (!confirmAll) { setConfirmAll(true); return; }
+              setConfirmAll(false);
+              onAcceptAll();
+            }}
+            title={
+              wouldGrow > 0
+                ? `${wouldGrow} would make the file bigger and are left for you`
+                : "Replace the originals for every checked encode"
+            }
+          >
+            {confirmAll
+              ? `Replace ${acceptable.length}? Click again`
+              : `Accept all ${acceptable.length}`}
+          </button>
+        )}
         {finished > 0 && <button className="jbtn quiet" onClick={onClear}>Clear {finished} finished</button>}
         {overflows && (
           <button
@@ -70,6 +97,13 @@ export function QueuePanel({
         )}
         <button className="jbtn quiet" onClick={onClose}>Close</button>
       </div>
+
+      {wouldGrow > 0 && (
+        <p className="qwarnrow">
+          {wouldGrow} of these came out <strong>bigger</strong> than the original — left out of
+          Accept all, decide on those yourself.
+        </p>
+      )}
 
       {!running && (
         <p className={`qpaused${snapshot.heldBy && snapshot.heldBy !== "paused" ? " governed" : ""}`}>
