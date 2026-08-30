@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, copyFileSync, statSync, existsSync, readdirSync, realpathSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, copyFileSync, statSync, existsSync, readdirSync, realpathSync, utimesSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,40 @@ function fixture() {
 
 const base = (roots: Root[]) => ({
   roots, ffmpegPath: FFMPEG, ffprobePath: FFPROBE, ffmpegVersion: "test",
+});
+
+test("encoder failure preserves its cause and removes partial output without touching the source", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "convertly-pipe-error-")));
+  const path = join(dir, "source.m4v");
+  const fakeFfmpeg = join(dir, "failing-ffmpeg");
+  try {
+    writeFileSync(path, "original test bytes");
+    // The builder always puts the output last. Simulate a failed muxer that
+    // creates a partial file, then emits its cause and generic final message.
+    writeFileSync(fakeFfmpeg, `#!/bin/sh
+for output do :; done
+printf 'partial output' > "$output"
+printf '%s\\n' 'Could not find tag for codec hevc: codec not supported in container' 'Could not write header: Invalid argument' 'Nothing was written into output file' >&2
+exit 1
+`, { mode: 0o700 });
+    const before = statSync(path);
+    const result = await runJob({
+      probe: { path, size: before.size, mtimeMs: before.mtimeMs, durationSec: 1,
+        container: "mp4", chapters: 0, probedAt: 0, error: null, audio: [], subtitles: [],
+        video: { index: 0, codec: "h264", width: 320, height: 180, pixFmt: "yuv420p",
+          bitDepth: 8, fps: 24, bitrate: 1e6, hdr: null, colorTransfer: null } },
+      selection: { audio: [], subtitles: [] }, preset: DEFAULT_PRESET,
+      ...base([{ id: "test", label: "Disposable", path: dir }]), ffmpegPath: fakeFfmpeg,
+    });
+    assert.equal(result.outcome, "failed");
+    assert.match(result.message, /original untouched.*codec hevc/);
+    assert.equal(readFileSync(path, "utf8"), "original test bytes");
+    assert.equal(statSync(path).mtimeMs, before.mtimeMs);
+    assert.equal(existsSync(join(dir, QUARANTINE_DIRNAME)), false);
+    assert.deepEqual(readdirSync(join(dir, TEMP_DIRNAME)), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("a successful job replaces in place and keeps the original", { skip: !available }, async () => {

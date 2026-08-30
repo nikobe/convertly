@@ -20,8 +20,10 @@ npm-debug.log*
 *.sqlite3
 *.db-wal
 *.db-shm
+*.db-journal
 *.sqlite-wal
 *.sqlite-shm
+*.sqlite-journal
 data/
 logs/
 *.log

@@ -3,6 +3,10 @@
 A local web console for browsing a Plex/Jellyfin library across several
 drives and re-encoding files smaller at the same picture quality.
 
+These design decisions also apply to work in Codex. Read `AGENTS.md` for
+development safeguards and `docs/OPERATIONS.md` for the deployment and current
+known issues. The operating snapshot was established on 2026-08-30.
+
 ## Locked decisions — do not relitigate these without asking
 
 **What this app is for: smaller files from a newer video codec, at the same
@@ -93,6 +97,11 @@ was a Matroska file wearing an `.avi` extension, which is a lie on disk. That
 case is flagged in the UI before queueing, and the quality tokens in the name
 survive, so a rescan should re-import at the same quality.
 
+Always pass the planned muxer explicitly. In particular, `.m4v` needs
+`-f mp4`: FFmpeg's extension-based guess selects the older `ipod` muxer,
+which rejects HEVC even with `hvc1`. This was reproduced on the Intel host
+on 2026-08-30; keeping `.m4v` with the MP4 muxer preserves the filename.
+
 **Never:** gratuitously change the container (mkv→mp4 is a filename change for
 no reason); call
 `RenameMovie`/`RenameSeries` afterwards (a naming scheme containing
@@ -176,15 +185,16 @@ filesystem without going through it.
 
 ## Build phases
 
-1. **Probe and browse** — read-only. *(current)*
-2. One file end to end. *(steps 1–4 built: command builder, encode runner,
-   verification gate, quarantine + atomic replace. Arr rescan and Plex refresh
-   still to do, and there is no UI trigger yet — jobs run via `runJob`.)*
+1. **Probe and browse** — built; browsing does not replace media.
+2. One file end to end — built: command builder, encode runner, verification,
+   quarantine, replacement, and optional Arr/Plex notifications. The UI queues
+   jobs that run through `runJob`.
 3. The queue *(built)*: persistent in SQLite, SSE progress, pause/resume,
    cancel, add-while-running, accept/discard per item.
 4. Governors *(built)*: time window, batch rhythm, thermal ceiling,
    playback-aware pause, disk guard.
-5. Polish: smart lists, savings ledger, sample estimator, review tray.
+5. Polish — savings ledger, estimates, and review queue are built. Smart lists
+   and a sample-encode estimator remain possible extensions, not current features.
 
 ## Audio and subtitle track selection
 
@@ -199,10 +209,10 @@ the default flag — on a foreign release the untagged 5.1 is usually itself a
 dub, so an explicit preferred-language tag has to beat a wider untagged
 track.
 
-The browse screen expands each file into a track chooser. It is projection
-only in phase 01; phase 02 must honour the recorded selection when building
-the ffmpeg command, and must show the chosen primary so it can be overridden
-per file. The heuristic is a good default, not a certainty.
+The browse screen expands each file into a track chooser. Its choices update
+the projection and are recorded when queueing, then honoured by the ffmpeg
+command builder. The chosen primary is shown so it can be overridden per file.
+The heuristic is a good default, not a certainty.
 
 `estimate.ts` is shared by server and client precisely so the row total and
 the panel can never disagree.
@@ -252,9 +262,20 @@ a power cut mid-batch resumes where it stopped: anything still marked
   have two encodes race for one output.
 - Pause lets the running job finish and starts nothing new. Cancel aborts the
   running one; the original is untouched either way.
+- Pause is now persisted in SQLite, so a controlled restart does not silently
+  resume a batch. A governor check already in flight rechecks pause before
+  starting the next encode.
 - A `review` item keeps its encode on disk, so accepting later costs no
   re-encode. Removing or discarding it deletes that file rather than orphaning
   it.
+
+Startup reserves the HTTP port and holds a separate SQLite instance lock before
+opening the application store or sweeping media. The lock is released by the OS
+on exit or crash; its file must not be deleted while running. The startup temp
+sweep preserves every directory containing a persisted pending output,
+including review encodes and their sidecars. `src/server/service.ts` provides
+local process controls. These changes were activated on the Mac mini on
+2026-08-30; `docs/OPERATIONS.md` records the rollout and historical deployment.
 
 ## Governors
 
@@ -269,10 +290,11 @@ or a media server.
   affordable.
 - **Windows crossing midnight are the normal case** (22:00–06:00). Treating
   the window as a simple range would mean it never opened.
-- **Thermal uses `machdep.xcpm.cpu_thermal_level` (Intel) or `pmset -g therm`,
-  never load average** — during an encode load is pinned by design and says
-  nothing about heat. When no sensor is available the governor reports that
-  and stands aside rather than blocking.
+- **Thermal defaults to `CPU_Speed_Limit` from `pmset -g therm`**, backing off
+  below 70. `machdep.xcpm.cpu_thermal_level` is displayed but its optional ceiling
+  is off by default: it tracks load rather than throttling on this Intel host.
+  Never substitute load average. With no sensor the governor reports that and
+  stands aside rather than blocking.
 - **The disk guard assumes the worst case**: the encode is written beside the
   original, so both exist at once and the output might not be smaller.
 - Defaults: thermal, playback and disk on; window and rhythm off, because they
@@ -300,6 +322,9 @@ outcome keeps the encode so accepting it later costs no re-encode.
   video frames, so the bar jumped to half instantly, sat there, then finished
   abruptly. There is a test asserting the published fraction derives from the
   frame count.
+- Keep both the start and end of bounded FFmpeg stderr, and show the opening
+  error lines in failed-job messages. The final "Nothing was written" line
+  alone concealed the actual unsupported-container error.
 - **ETA comes from frames per second measured over a trailing 120-second
   window**, never a static figure — the target host throttles, so a rate sampled in
   the first minute is a lie by hour three. Nothing is published until 20s of
@@ -311,6 +336,13 @@ outcome keeps the encode so accepting it later costs no re-encode.
   a feature it is a large slice of total time and used to look like a hang:
   the job sat in `encoding` with a frozen bar for the whole of it. The decode
   sweep reports a real percentage; the VMAF windows are counted off.
+- VMAF comparisons keep a common seek-relative timeline and use
+  `ts_sync_mode=nearest`. Container time bases round differently; selecting
+  the preceding reference frame for a microsecond difference produced a score
+  of 74.8 for identical pictures. Independently resetting each input's first
+  sampled frame to zero can also misalign a seek. Nearest timestamp matching
+  fixes both without searching for similar content or relaxing the floor of
+  93. The regression also checks that deliberately shifted content fails.
 - `replace.ts` is the arr-safety boundary. Same-volume rename only — a
   cross-volume swap is refused rather than silently becoming a copy — then
   mtime and mode are restored. `sweepQuarantine` only ever looks inside a

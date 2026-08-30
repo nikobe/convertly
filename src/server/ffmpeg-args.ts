@@ -179,9 +179,10 @@ export function buildCommand(input: BuildInput): BuiltCommand {
 
   // HEVC in an MP4-family container is unplayable on Apple devices without
   // this tag, and silently so.
-  if (encoder !== "copy" && planContainer(outputPath).needsHvc1) args.push("-tag:v", "hvc1");
+  const container = planContainer(outputPath);
+  if (encoder !== "copy" && container.needsHvc1) args.push("-tag:v", "hvc1");
 
-  args.push("-y", outputPath);
+  args.push("-f", container.muxer, "-y", outputPath);
 
   if (plan.atmos) {
     notes.push("Atmos track copied untouched — the objects survive and the playback chain downmixes them.");

@@ -10,16 +10,20 @@
  */
 
 /** Containers that can carry HEVC, and the ffmpeg format for each. */
-const HEVC_CAPABLE: Record<string, { ext: string; needsHvc1: boolean }> = {
-  ".mkv": { ext: ".mkv", needsHvc1: false },
-  ".mp4": { ext: ".mp4", needsHvc1: true },
-  ".m4v": { ext: ".m4v", needsHvc1: true },
-  ".mov": { ext: ".mov", needsHvc1: true },
+const HEVC_CAPABLE: Record<string, { ext: string; needsHvc1: boolean; muxer: ContainerPlan["muxer"] }> = {
+  ".mkv": { ext: ".mkv", needsHvc1: false, muxer: "matroska" },
+  ".mp4": { ext: ".mp4", needsHvc1: true, muxer: "mp4" },
+  // Auto-detection chooses the legacy iPod muxer for .m4v, which rejects HEVC.
+  // Explicit MP4 keeps the filename and the MPEG-4 container family.
+  ".m4v": { ext: ".m4v", needsHvc1: true, muxer: "mp4" },
+  ".mov": { ext: ".mov", needsHvc1: true, muxer: "mov" },
 };
 
 export interface ContainerPlan {
   /** Extension the output file will carry. */
   extension: string;
+  /** Explicit FFmpeg output format; the extension can select a legacy muxer. */
+  muxer: "matroska" | "mp4" | "mov";
   /** True when that differs from the source, so the filename must change. */
   changed: boolean;
   /** Apple's players need the hvc1 tag to play HEVC in an MP4 family file. */
@@ -34,10 +38,11 @@ export function planContainer(sourcePath: string): ContainerPlan {
   const capable = HEVC_CAPABLE[ext];
 
   if (capable) {
-    return { extension: capable.ext, changed: false, needsHvc1: capable.needsHvc1, reason: null };
+    return { extension: capable.ext, muxer: capable.muxer, changed: false, needsHvc1: capable.needsHvc1, reason: null };
   }
   return {
     extension: ".mkv",
+    muxer: "matroska",
     changed: true,
     needsHvc1: false,
     reason:

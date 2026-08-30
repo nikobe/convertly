@@ -239,6 +239,17 @@ export class Store {
 
   // ── queue ──────────────────────────────────────────────────────────
 
+  queuePaused(): boolean {
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'queuePaused'").get() as
+      { value: string } | undefined;
+    return row?.value === "true";
+  }
+
+  setQueuePaused(paused: boolean): void {
+    this.db.prepare("INSERT INTO settings (key, value) VALUES ('queuePaused', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(String(paused));
+  }
+
   /**
    * The queue lives in SQLite, not memory, so a crash or a power cut mid-batch
    * resumes where it stopped instead of losing the night's work.

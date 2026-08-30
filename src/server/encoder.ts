@@ -73,8 +73,11 @@ export class Encode {
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
-      // Keep only the tail; a broken encode can produce megabytes of it.
-      if (stderr.length > 64_000) stderr = stderr.slice(-64_000);
+      // Keep the cause as well as the ending; FFmpeg often finishes with only
+      // "Nothing was written" after explaining the actual failure at the top.
+      if (stderr.length > 64_000) {
+        stderr = stderr.slice(0, 31_900) + "\n[FFmpeg log truncated]\n" + stderr.slice(-31_900);
+      }
     });
 
     const fields = new Map<string, string>();
@@ -147,6 +150,13 @@ export class Encode {
   get isPaused(): boolean {
     return this.paused;
   }
+}
+
+/** A bounded, useful queue message, instead of FFmpeg's generic final line. */
+export function summarizeFfmpegError(stderr: string, exitCode: number | null): string {
+  const lines = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return `exit code ${exitCode ?? "unknown"}`;
+  return lines.slice(0, 3).join("\n").slice(0, 1_500);
 }
 
 /** Trailing window used to measure throughput. */

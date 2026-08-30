@@ -169,6 +169,21 @@ test("the output path is the last argument and overwrite is explicit", () => {
   assert.equal(args.at(-2), "-y");
 });
 
+test("m4v explicitly uses MP4 for both encoding and video copy", () => {
+  for (const copy of [false, true]) {
+    const p = probe({ subtitles: [], audio: [audio({ codec: "aac", channels: 2 })] });
+    if (copy) p.video = { ...p.video!, codec: "hevc", bitrate: 2e6 };
+    for (const ext of ["m4v", "M4V"]) {
+      const outputPath = `/m/.convertly-tmp/out.${ext}`;
+      const { args, encoder } = buildCommand({ probe: p, selection: keepEverything(p), preset: DEFAULT_PRESET, outputPath });
+      assert.equal(encoder, copy ? "copy" : "libx265");
+      assert.equal(arg(args, "-f"), "mp4", "extension auto-detection selects the incompatible iPod muxer");
+      assert.equal(args.at(-1), outputPath, "the filename must stay unchanged");
+      if (!copy) assert.equal(arg(args, "-tag:v"), "hvc1");
+    }
+  }
+});
+
 test("an Atmos track is copied untouched, and nothing is added beside it", () => {
   const p = probe({ audio: [audio({ codec: "eac3", channels: 6, bitrate: 768_000, hasAtmos: true })] });
   const { args, expectedAudioStreams } = build(p);
