@@ -4,14 +4,23 @@ Browse a Plex/Jellyfin library, see what is worth re-encoding, and convert it
 smaller at the same picture quality — without Sonarr or Radarr ever deciding a
 file went missing.
 
-**Phase 01: read-only.** It probes and reports. It cannot alter a byte.
+**Conversion is implemented.** The app can queue encodes, verify their output,
+and replace media in place while retaining originals in quarantine for 14
+days. It is not read-only.
+
+For the existing Mac mini deployment, start with
+[operations and handover](docs/OPERATIONS.md). For project work in Codex, read
+[AGENTS.md](AGENTS.md) and the design decisions in [CLAUDE.md](CLAUDE.md).
 
 ## Requirements
 
 - **Node 24 or newer** (the server is TypeScript, run natively)
-- **ffprobe** — and ffmpeg from phase 02 onward
+- **ffprobe** for scanning and **ffmpeg** for conversion
 
 ## Setup
+
+For a new installation. Do not run these commands over the live deployment
+without first following the operating procedure linked above.
 
 ```sh
 npm install
@@ -23,8 +32,27 @@ npm start
 
 Then open http://localhost:8973.
 
+To control a background instance on this Mac:
+
+```sh
+npm run service:status
+npm run service:start
+npm run service:stop
+npm run service:restart
+```
+
+The controls verify the listening process against this checkout and database.
+Stop/restart refuse an active encode or verification unless explicitly given
+`-- --force`. Restart leaves the queue paused; resume in the app after checking
+health. New background starts append to `data/server.log` (or the configured
+`dataDir`). These commands do not install a login or boot service. See the
+[operating procedure](docs/OPERATIONS.md#restart-safety-update) for details.
+
 For development, `npm run dev` runs the API with `--watch` and Vite's dev
-server on port 5273, proxying `/api` to the API.
+server on port 5273, proxying `/api` to port 8973. Use isolated media roots,
+config, and database. When production is already running on 8973, use a
+different API port and update the dev checkout's Vite proxy accordingly;
+otherwise development UI actions reach the live library.
 
 ## Configuration
 
@@ -35,9 +63,12 @@ server on port 5273, proxying `/api` to the API.
 | `roots` | The only folders the app can read. Each needs `id`, `label`, `path`. |
 | `ffprobePath` / `ffmpegPath` | Explicit binary paths. Omit to auto-detect. |
 | `scanConcurrency` | Parallel ffprobes during a scan. Default 4. |
+| `dataDir` | SQLite state directory. Default `data`, relative to the server's working directory. Use a separate directory for development. |
 | `videoExtensions` | Which extensions count as video. |
 | `radarr` / `sonarr` | `{ "url": "...", "apiKey": "..." }`. Optional. |
 | `plex` | `{ "url": "...", "token": "..." }`. Optional. |
+
+Set `CONVERTLY_CONFIG` to use a config file other than `config/convertly.json`.
 
 ## When it is allowed to work
 
@@ -49,7 +80,7 @@ encode without losing it. Each is independent; all are optional.
   "governors": {
     "window":   { "enabled": true, "from": "01:00", "to": "08:30" },
     "rhythm":   { "enabled": true, "workMinutes": 90, "restMinutes": 20 },
-    "thermal":  { "enabled": true, "maxLevel": 0 },
+    "thermal":  { "enabled": true, "maxLevel": null, "minSpeedLimit": 70 },
     "playback": { "enabled": true },
     "disk":     { "enabled": true, "headroomBytes": 5368709120 }
   }
@@ -64,9 +95,12 @@ encode without losing it. Each is independent; all are optional.
 | `playback` | Stop while anyone is streaming from Plex. Needs the `plex` block. |
 | `disk` | Refuse to start without room for the output alongside the original. |
 
-Thermal and playback are on by default; the scheduling ones are off, because
+Thermal, playback, and disk protection are on by default; the scheduling ones are off, because
 they stop work happening and that should be asked for. A suspended encode is
 `SIGSTOP`, so nothing is lost and nothing is recomputed when it resumes.
+Playback detection requires a configured Plex connection. Thermal protection
+defaults to the OS CPU speed limit; the optional thermal-level ceiling is off
+because that reading tracks load rather than actual throttling on the host.
 
 ## Telling Radarr, Sonarr and Plex
 

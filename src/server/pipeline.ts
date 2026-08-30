@@ -1,7 +1,7 @@
-import { mkdirSync, rmSync, existsSync, statSync, readdirSync } from "node:fs";
-import { join, dirname, basename } from "node:path";
+import { mkdirSync, rmSync, existsSync, statSync, readdirSync, realpathSync } from "node:fs";
+import { join, dirname, basename, resolve, sep } from "node:path";
 import { buildCommand, BuildError } from "./ffmpeg-args.ts";
-import { Encode, type Progress } from "./encoder.ts";
+import { Encode, summarizeFfmpegError, type Progress } from "./encoder.ts";
 import { verify, type Check, type VerifyStage } from "./verify.ts";
 import { replaceInPlace, type ReplaceRecord } from "./replace.ts";
 import { probeFile } from "./probe.ts";
@@ -116,8 +116,8 @@ export async function runJob(options: JobOptions): Promise<JobResult> {
   }
   if (!result.ok) {
     cleanup();
-    const firstLine = result.stderr.split("\n").filter(Boolean).pop() ?? `exit code ${result.exitCode}`;
-    return base("failed", `ffmpeg failed, original untouched: ${firstLine}`, common);
+    const detail = summarizeFfmpegError(result.stderr, result.exitCode);
+    return base("failed", `ffmpeg failed, original untouched: ${detail}`, common);
   }
 
   // ── verify ───────────────────────────────────────────────────────────
@@ -184,9 +184,13 @@ export async function freshProbe(ffprobePath: string, path: string): Promise<Pro
   return probeFile(ffprobePath, path);
 }
 
-/** Remove temp files left by a crash or a power cut. Called at boot. */
-export function sweepTempDirs(roots: Root[]): string[] {
+/** Remove abandoned outputs, preserving everything still referenced by the queue. */
+export function sweepTempDirs(roots: Root[], pendingPaths: readonly string[] = []): string[] {
   const removed: string[] = [];
+  const canonical = (path: string): string => {
+    try { return realpathSync(path); } catch { return resolve(path); }
+  };
+  const protectedPaths = pendingPaths.map(canonical);
   const walk = (dir: string, depth: number): void => {
     if (depth > 6 || !existsSync(dir)) return;
     let entries;
@@ -199,6 +203,11 @@ export function sweepTempDirs(roots: Root[]): string[] {
       if (!entry.isDirectory()) continue;
       const path = join(dir, entry.name);
       if (entry.name === TEMP_DIRNAME) {
+        // A review output is not debris from a crash. Keep its whole scratch
+        // directory conservatively, including sidecars. Canonical paths also
+        // handle /tmp vs /private/tmp and symlinked root configuration.
+        const prefix = canonical(path) + sep;
+        if (protectedPaths.some((pending) => pending === prefix.slice(0, -1) || pending.startsWith(prefix))) continue;
         try {
           rmSync(path, { recursive: true, force: true });
           removed.push(path);

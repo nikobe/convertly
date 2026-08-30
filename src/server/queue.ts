@@ -49,6 +49,7 @@ export class Queue {
 
   constructor(deps: QueueDeps) {
     this.deps = deps;
+    this.paused = deps.store.queuePaused();
     // A row still marked running means the process died mid-encode.
     const requeued = this.deps.store.requeueInterrupted();
     if (requeued > 0) this.emit();
@@ -235,6 +236,7 @@ export class Queue {
   }
 
   pause(): void {
+    this.deps.store.setQueuePaused(true);
     this.paused = true;
     this.emit();
   }
@@ -245,6 +247,7 @@ export class Queue {
   }
 
   resume(): void {
+    this.deps.store.setQueuePaused(false);
     this.paused = false;
     this.encode?.resume();
     this.emit();
@@ -411,6 +414,9 @@ export class Queue {
         }
 
         const status = await this.deps.governors.evaluate({ path: row.path, sourceBytes: row.source_bytes });
+        // Pause/shutdown can arrive while a sensor or Plex request is pending.
+        // Do not start the next encode after the user has already stopped us.
+        if (this.paused) break;
         if (!status.verdict.allowed) {
           this.setHold(status.verdict.governor, status.verdict.reason);
           this.scheduleRecheck();

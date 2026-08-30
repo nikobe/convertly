@@ -2,7 +2,34 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { estimateEta, parseSpeed, ETA_WINDOW_MS, ETA_MIN_SPAN_MS } from "./encoder.ts";
+import { Encode, summarizeFfmpegError, estimateEta, parseSpeed, ETA_WINDOW_MS, ETA_MIN_SPAN_MS } from "./encoder.ts";
+
+test("FFmpeg failure messages preserve the cause, not just the empty-output epilogue", () => {
+  const stderr = [
+    "", "[ipod @ 123] Could not find tag for codec hevc in stream #0, codec not currently supported in container",
+    "[out#0/ipod @ 123] Could not write header: Invalid argument",
+    "[vf#0:0 @ 123] Error sending frames to consumers: Invalid argument",
+    "[out#0/ipod @ 123] Nothing was written into output file, because at least one of its streams received no packets.",
+  ].join("\r\n");
+  const message = summarizeFfmpegError(stderr, 234);
+  assert.match(message, /codec hevc.*not currently supported/);
+  assert.doesNotMatch(message, /Nothing was written/);
+  assert.equal(summarizeFfmpegError("\n  ", 1), "exit code 1");
+  assert.ok(summarizeFfmpegError("x".repeat(10_000), 1).length <= 1_500);
+});
+
+test("large encoder stderr retains the first cause and final error without unbounded memory", async () => {
+  const result = await new Encode().run({
+    ffmpegPath: process.execPath,
+    args: ["-e", "process.stderr.write('Hardware encoder unavailable\\n' + 'detail\\n'.repeat(30000) + 'Final failure\\n', () => process.exit(1))"],
+    durationSec: null, totalFrames: null,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.stderr, /^Hardware encoder unavailable/);
+  assert.match(result.stderr, /Final failure$/);
+  assert.match(result.stderr, /FFmpeg log truncated/);
+  assert.ok(result.stderr.length <= 64_000);
+});
 
 test("parseSpeed reads ffmpeg's trailing x", () => {
   assert.equal(parseSpeed("1.02x"), 1.02);

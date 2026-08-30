@@ -13,6 +13,10 @@
     "dev:web": "vite",
     "build": "vite build",
     "start": "node src/server/index.ts",
+    "service:status": "node src/server/service.ts status",
+    "service:start": "node src/server/service.ts start",
+    "service:stop": "node src/server/service.ts stop",
+    "service:restart": "node src/server/service.ts restart",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "node --test 'src/server/*.test.ts' 'src/shared/*.test.ts'"
   },

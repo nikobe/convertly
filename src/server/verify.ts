@@ -267,9 +267,13 @@ async function vmafWindow(
     "-hide_banner", "-nostdin", "-v", "info",
     "-ss", offset.toFixed(3), "-t", seconds.toFixed(3), "-i", distortedPath,
     "-ss", offset.toFixed(3), "-t", seconds.toFixed(3), "-i", referencePath,
-    // Scale the distorted stream onto the reference geometry so a resolution
-    // cap does not make the comparison meaningless.
-    "-lavfi", "[0:v]setpts=PTS-STARTPTS[dist];[1:v]setpts=PTS-STARTPTS[ref];[dist][ref]libvmaf",
+    // Keep both streams on the same seek-relative timeline. Resetting each
+    // to its own first frame can align different frames after a seek. Muxer
+    // time bases also round timestamps differently (e.g. 1/90000 vs 1/24000):
+    // framesync's default "lower or equal" then compares the preceding frame
+    // for a difference of just a few microseconds. Nearest preserves timing
+    // while pairing the actual corresponding pictures; it does not retime them.
+    "-lavfi", "[0:v:0]settb=AVTB[dist];[1:v:0]settb=AVTB[ref];[dist][ref]libvmaf=ts_sync_mode=nearest",
     "-f", "null", "-",
   ];
   try {

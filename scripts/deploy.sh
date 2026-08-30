@@ -1,113 +1,73 @@
 #!/bin/bash
-#
-# Pull, build and restart Convertly on the machine it is run on.
-#
-# Written to be safe to run over SSH from a non-interactive shell, which is
-# where most of the awkwardness comes from: nvm is not loaded, PATH is bare,
-# and nothing inherits a terminal.
-#
-#   ./scripts/deploy.sh          pull, build, restart
-#   ./scripts/deploy.sh --force  restart even if a job is running
-#
+# Update the production main checkout. Service control refuses busy stops by
+# default; --force explicitly discards an in-flight job's progress.
 set -euo pipefail
 
 FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
-
+case "${1:-}" in
+  "") ;;
+  --force) FORCE=1 ;;
+  *) echo "Usage: ./scripts/deploy.sh [--force]" >&2; exit 1 ;;
+esac
+[ "$#" -le 1 ] || { echo "Too many arguments" >&2; exit 1; }
 cd "$(dirname "$0")/.."
-REPO="$PWD"
 
-# ── find a usable node ──────────────────────────────────────────────────
-# nvm's shell function does not exist here, so resolve the binary directly.
-for candidate in \
-  "$HOME"/.nvm/versions/node/v2[4-9]*/bin \
-  /opt/homebrew/bin /usr/local/bin
-do
-  [ -x "$candidate/node" ] && PATH="$candidate:$PATH" && break
+for candidate in "$HOME"/.nvm/versions/node/v2[4-9]*/bin /opt/homebrew/bin /usr/local/bin; do
+  if [ -x "$candidate/node" ]; then PATH="$candidate:$PATH"; break; fi
 done
 export PATH
+command -v node >/dev/null || { echo "Node 24+ is required" >&2; exit 1; }
+[ "$(node -p 'Number(process.versions.node.split(".")[0])')" -ge 24 ] || exit 1
+[ "$(git branch --show-current)" = main ] || { echo "Deploy from main, not a development branch." >&2; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "Working tree is dirty; refusing to deploy." >&2; exit 1; }
 
-command -v node >/dev/null || { echo "✗ no node found"; exit 1; }
-MAJOR=$(node -p 'process.versions.node.split(".")[0]')
-[ "$MAJOR" -ge 24 ] || { echo "✗ node $(node -v) is too old — needs 24+ for native TypeScript"; exit 1; }
-
-PORT=$(node -p 'try{require("./config/convertly.json").port ?? 8973}catch(e){8973}')
-BASE="http://127.0.0.1:$PORT"
-
-# ── refuse to interrupt real work ───────────────────────────────────────
-# Restarting mid-encode throws away that job's progress. The queue requeues
-# it, so nothing is lost permanently, but hours of encoding might be.
-if [ "$FORCE" -eq 0 ] && curl -sf -m 5 "$BASE/api/queue" >/dev/null 2>&1; then
-  RUNNING=$(curl -s -m 5 "$BASE/api/queue" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).items.filter(i=>i.state==="running").length' 2>/dev/null || echo 0)
-  if [ "${RUNNING:-0}" -gt 0 ]; then
-    echo "✗ a job is encoding right now — deploying would discard its progress."
-    echo "  Pause the queue and let it finish, or re-run with --force."
-    exit 1
-  fi
-fi
-
-# ── pull ────────────────────────────────────────────────────────────────
-if [ -n "$(git status --porcelain)" ]; then
-  echo "✗ working tree is dirty here; refusing to pull over local changes:"
-  git status --short | sed 's/^/    /'
-  exit 1
-fi
-
-BEFORE=$(git rev-parse --short HEAD)
 git fetch --quiet origin
-git merge --ff-only --quiet origin/main
-AFTER=$(git rev-parse --short HEAD)
+# Refuse divergence BEFORE taking the service down.
+git merge-base --is-ancestor HEAD origin/main || { echo "main has diverged from origin/main." >&2; exit 1; }
+BEFORE=$(git rev-parse HEAD)
 
-if [ "$BEFORE" = "$AFTER" ]; then
-  echo "· already at $AFTER"
+# Pause, recheck, and signal only the verified owner. Stop before changing
+# dependencies or live assets, not after a build during which more work ran.
+if [ "$FORCE" -eq 1 ]; then
+  node src/server/service.ts stop --force
 else
-  echo "· $BEFORE → $AFTER"
-  git --no-pager log --oneline "$BEFORE..$AFTER" | sed 's/^/    /'
+  node src/server/service.ts stop
 fi
+trap 'echo "Deployment failed. The service may be stopped; inspect the error before running npm run service:start. No broad process kill was attempted." >&2' ERR
 
-# ── install and build only when they can have changed ───────────────────
-if [ "$BEFORE" != "$AFTER" ] && ! git diff --quiet "$BEFORE" "$AFTER" -- package-lock.json package.json; then
-  echo "· dependencies changed, running npm ci"
+# SQLite backup includes committed WAL content. Configuration and backups
+# stay under the ignored data directory, private to this user.
+node --input-type=module <<'NODE'
+import { DatabaseSync, backup } from 'node:sqlite';
+import { mkdirSync, copyFileSync, chmodSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { loadConfig } from './src/server/config.ts';
+const configPath = resolve(process.env.CONVERTLY_CONFIG ?? 'config/convertly.json');
+const config = loadConfig(configPath);
+const directory = join(config.dataDir, 'backups', new Date().toISOString().replace(/[:.]/g, '-'));
+mkdirSync(directory, {recursive: true, mode: 0o700});
+copyFileSync(configPath, join(directory, 'convertly.json'));
+chmodSync(join(directory, 'convertly.json'), 0o600);
+const database = join(config.dataDir, 'convertly.db');
+if (existsSync(database)) {
+  const db = new DatabaseSync(database, {readOnly: true});
+  try { await backup(db, join(directory, 'convertly.db')); }
+  finally { db.close(); }
+  chmodSync(join(directory, 'convertly.db'), 0o600);
+}
+console.log(`Backup: ${directory}`);
+NODE
+
+git merge --ff-only --quiet origin/main
+AFTER=$(git rev-parse HEAD)
+if [ ! -d node_modules ] || ! git diff --quiet "$BEFORE" "$AFTER" -- package-lock.json package.json; then
   npm ci --silent
 fi
-
-echo "· building"
-npm run build --silent >/dev/null
-
-# ── restart ─────────────────────────────────────────────────────────────
-# SIGTERM so the server can stop its encoder; SIGKILL would orphan the ffmpeg.
-pkill -f "node src/server/index.ts" 2>/dev/null || true
-for _ in $(seq 1 20); do
-  pgrep -f "node src/server/index.ts" >/dev/null || break
-  sleep 0.5
-done
-
-# Anything of ours still encoding is an orphan. Only our own temp paths are
-# matched, so a media server's own transcodes are left well alone.
-ORPHANS=$(pgrep -fl "ffmpeg" 2>/dev/null | grep "convertly-tmp" | awk '{print $1}' || true)
-if [ -n "$ORPHANS" ]; then
-  echo "· reaping $(echo "$ORPHANS" | wc -l | tr -d ' ') orphaned encode(s) from a previous run"
-  echo "$ORPHANS" | xargs kill 2>/dev/null || true
-  sleep 1
-fi
-
-mkdir -p "$REPO/data"
-nohup node src/server/index.ts > "$REPO/data/server.log" 2>&1 &
-disown 2>/dev/null || true
-
-# ── confirm it came back ────────────────────────────────────────────────
-for _ in $(seq 1 30); do
-  if curl -sf -m 2 "$BASE/api/health" >/dev/null 2>&1; then
-    echo "✓ running at $AFTER on port $PORT"
-    curl -s "$BASE/api/health" | node -p '
-      const h = JSON.parse(require("fs").readFileSync(0,"utf8"));
-      h.checks.filter(c=>!c.ok).map(c=>`    ✗ ${c.label}: ${c.detail}`).join("\n") || "    all checks green"
-    '
-    exit 0
-  fi
-  sleep 1
-done
-
-echo "✗ it did not come back up. Last lines of data/server.log:"
-tail -15 "$REPO/data/server.log" | sed 's/^/    /'
-exit 1
+npm run typecheck
+npm test
+npm run build
+# Keep the queue paused, including when upgrading a legacy server that did
+# not persist Pause. Resume deliberately in the UI after checking health.
+CONVERTLY_START_PAUSED=1 node src/server/service.ts start
+trap - ERR
+echo "Deployed $(git rev-parse --short HEAD). Check health, then resume the queue in the app."

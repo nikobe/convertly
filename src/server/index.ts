@@ -1,7 +1,9 @@
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import { existsSync, writeFileSync, renameSync } from "node:fs";
 import { loadConfig, ConfigError } from "./config.ts";
 import { Store } from "./db.ts";
 import { Scanner } from "./scanner.ts";
@@ -13,6 +15,7 @@ import { Integrations } from "./integrations.ts";
 import { Governors } from "./governors.ts";
 import { sweepTempDirs } from "./pipeline.ts";
 import { sweepQuarantine } from "./replace.ts";
+import { acquireInstance } from "./instance.ts";
 
 async function main(): Promise<void> {
   let config;
@@ -26,42 +29,83 @@ async function main(): Promise<void> {
     throw err;
   }
 
+  // Reserve the real listening socket before touching the store or media.
+  // The factory returns 503 until routes and runtime state are fully ready.
+  // Unlike a probe-then-close port check, ownership has no race window.
+  let ready = false;
+  let closing = false;
+  let store: Store | undefined;
+  let queue: Queue | undefined;
+  const app = Fastify({
+    logger: { transport: undefined, level: process.env.LOG_LEVEL ?? "info" },
+    bodyLimit: 256 * 1024,
+    serverFactory: (handler) => createServer((request, response) => {
+      if (!ready || closing) {
+        response.writeHead(503, { "content-type": "application/json", connection: "close" });
+        response.end(JSON.stringify({ error: "Convertly is starting or stopping." }));
+        return;
+      }
+      handler(request, response);
+    }),
+  });
+
+  const close = async () => {
+    if (closing) return;
+    closing = true;
+    queue?.shutdown();
+    closeOpenStreams();
+    const forced = setTimeout(() => process.exit(1), 4000);
+    forced.unref();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      // We bind the factory's server directly, so close it explicitly too.
+      await Promise.all([
+        app.close(),
+        new Promise<void>((resolve) => app.server.close(() => resolve())),
+      ]);
+      store?.close();
+    } finally {
+      process.exit(0);
+    }
+  };
+  process.on("SIGINT", close);
+  process.on("SIGTERM", close);
+
+  await new Promise<void>((resolve, reject) => {
+    app.server.once("error", reject);
+    app.server.listen({ host: config.host, port: config.port }, () => {
+      app.server.removeListener("error", reject);
+      resolve();
+    });
+  });
+  const release = acquireInstance(config.dataDir);
+  process.once("exit", release);
+
   const ffprobe = await locate("ffprobe", config.ffprobePath);
-  // ffmpeg is not needed until phase 02, so a missing one is reported by the
-  // health check rather than blocking startup.
   let ffmpeg: Binary | null = null;
   try {
     ffmpeg = await locate("ffmpeg", config.ffmpegPath);
   } catch {
-    ffmpeg = null;
+    // Browsing still works without an encoder; health reports the limitation.
   }
+  if (closing) return;
 
-  const store = new Store(config.dataDir);
+  store = new Store(config.dataDir);
   const scanner = new Scanner(config, store, ffprobe.path);
-
-  // A crash or a power cut mid-encode leaves temp files behind; clear them
-  // before anything else can trip over them. Quarantine is swept on the same
-  // pass so expired originals do not sit on the drive indefinitely.
-  const sweptTemp = sweepTempDirs(config.roots);
+  // Preserve all pending references, not just a guessed subset of states.
+  const pending = store.listQueue().flatMap((row) => row.pending_path ? [row.pending_path] : []);
+  const sweptTemp = sweepTempDirs(config.roots, pending);
   const sweptQuarantine = sweepQuarantine(config.roots);
-
   const integrations = new Integrations(config.integrations);
   const governors = new Governors(config.governors, config.integrations.plex);
-
-  const queue = new Queue({
-    store,
-    integrations,
-    governors,
-    roots: config.roots,
-    ffmpegPath: ffmpeg?.path ?? "",
-    ffprobePath: ffprobe.path,
+  queue = new Queue({
+    store, integrations, governors, roots: config.roots,
+    ffmpegPath: ffmpeg?.path ?? "", ffprobePath: ffprobe.path,
     ffmpegVersion: ffmpeg?.version ?? "unknown",
   });
-
-  const app = Fastify({
-    logger: { transport: undefined, level: process.env.LOG_LEVEL ?? "info" },
-    bodyLimit: 256 * 1024,
-  });
+  // A controlled upgrade can explicitly hold work even when the old version
+  // did not persist its pause flag. No conversion starts before this point.
+  if (process.env.CONVERTLY_START_PAUSED === "1") queue.pause();
 
   // Refuse anything that is not on the allowlist before it reaches a route.
   // There is no password: reachability is the whole of the access control.
@@ -85,36 +129,27 @@ async function main(): Promise<void> {
     });
   }
 
-  let closing = false;
-  const close = async () => {
-    if (closing) return;
-    closing = true;
-    // Stop the encoder before anything else: an orphaned ffmpeg outlives the
-    // process that started it and there is nothing left to reap it.
-    queue.shutdown();
-    closeOpenStreams();
-    // A stuck close is worse than an abrupt one: the process stayed alive,
-    // kept draining the queue, and a deploy started a second server beside it.
-    const forced = setTimeout(() => process.exit(0), 4000);
-    forced.unref?.();
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    try {
-      await app.close();
-      store.close();
-    } catch {
-      /* going down regardless */
-    }
-    process.exit(0);
+  const address = app.server.address();
+  if (!address || typeof address === "string") throw new Error("No HTTP listening address.");
+  const identity = {
+    app: "convertly", instanceId: randomUUID(), pid: process.pid,
+    cwd: process.cwd(), dataDir: resolve(config.dataDir),
+    configPath: resolve(process.env.CONVERTLY_CONFIG ?? "config/convertly.json"),
+    logPath: process.env.CONVERTLY_LOG_PATH ?? null,
+    host: config.host, port: address.port, startedAt: new Date().toISOString(),
   };
-  process.on("SIGINT", close);
-  process.on("SIGTERM", close);
-
-  await app.listen({ host: config.host, port: config.port });
+  app.get("/api/service", async () => identity);
+  await app.ready();
+  const metadataPath = join(config.dataDir, "service.json");
+  writeFileSync(metadataPath + ".tmp", JSON.stringify(identity, null, 2) + "\n", { mode: 0o600 });
+  renameSync(metadataPath + ".tmp", metadataPath);
+  ready = true;
+  app.log.info(`Server listening at ${identity.host === "::" ? "http://[::]" : `http://${identity.host}`}:${identity.port}`);
   // Anything left queued from last time starts as soon as we are listening.
   void queue.drain();
   app.log.info(`ffprobe ${ffprobe.version} (${ffprobe.source})`);
   app.log.info(`roots: ${config.roots.map((r) => r.label).join(", ")}`);
-  for (const url of reachableUrls(config.port)) app.log.info(`open ${url}`);
+  for (const url of reachableUrls(identity.port)) app.log.info(`open ${url}`);
   app.log.info(`accepting: ${config.allowedClients.join(", ")}`);
   if (isExposedHost(config.host) && config.allowedClients.includes("*")) {
     app.log.warn("bound beyond this machine with allowedClients ['*'] — anything that can reach the port can re-encode your media");

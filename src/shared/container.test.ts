@@ -39,6 +39,15 @@ test("case does not matter", () => {
   assert.equal(planContainer("/m/Film.AVI").changed, true);
 });
 
+test("container plans explicitly select an HEVC-capable muxer", () => {
+  for (const [extension, muxer] of [
+    ["mkv", "matroska"], ["mp4", "mp4"], ["m4v", "mp4"],
+    ["M4V", "mp4"], ["mov", "mov"], ["avi", "matroska"],
+  ]) {
+    assert.equal(planContainer(`/m/film.${extension}`).muxer, muxer);
+  }
+});
+
 test("withExtension replaces only the extension", () => {
   assert.equal(withExtension("/m/a.b.c/Show S01E01.avi", ".mkv"), "/m/a.b.c/Show S01E01.mkv");
   assert.equal(withExtension("/m/no-extension", ".mkv"), "/m/no-extension.mkv");
