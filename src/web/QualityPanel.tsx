@@ -37,12 +37,14 @@ const CAPS = [
 ];
 
 export function QualityPanel({
-  preset, onChange, onClose, saving,
+  preset, onChange, onClose, saving, queuedCount, onApplyToQueue,
 }: {
   preset: Preset;
   onChange: (next: Preset) => void;
   onClose: () => void;
   saving: boolean;
+  queuedCount: number;
+  onApplyToQueue: () => void;
 }) {
   const [confirmCap, setConfirmCap] = useState(false);
   const step = QUALITY_STEPS.find((s) => s.crf === preset.crf);
@@ -156,9 +158,15 @@ export function QualityPanel({
       </div>
 
       <div className="qactions">
+        {queuedCount > 0 && (
+          <button className="jbtn go" onClick={onApplyToQueue}>
+            Also apply to {queuedCount} waiting
+          </button>
+        )}
         <span className="qnote">
-          Changes are kept automatically — they survive a refresh, a restart, and apply to
-          anything the queue runs later.
+          Changes are kept automatically and apply to anything queued from here on. Items
+          already waiting keep the settings they were added with, so what you asked for is
+          what runs — use the button to change those too.
         </span>
       </div>
     </section>

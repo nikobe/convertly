@@ -295,6 +295,12 @@ export function App() {
           onChange={setPreset}
           onClose={() => setShowQuality(false)}
           saving={presetSaving}
+          queuedCount={queue?.totals.queued ?? 0}
+          onApplyToQueue={() =>
+            api.applyPresetToQueue()
+              .then(({ updated }) => setNote(`Applied to ${updated} waiting item${updated === 1 ? "" : "s"}.`))
+              .catch((e: Error) => setNote(e.message))
+          }
         />
       )}
 

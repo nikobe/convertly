@@ -204,6 +204,25 @@ export class Queue {
     return removed;
   }
 
+  /**
+   * Apply the current default preset to everything still waiting.
+   *
+   * Each item stores the preset it was queued with, so that what you asked
+   * for is what runs — which also means changing the settings afterwards does
+   * nothing to a queue already built. This is the deliberate way to say "and
+   * the ones already waiting too".
+   */
+  applyPresetToQueued(preset: Preset): number {
+    let changed = 0;
+    for (const row of this.deps.store.listQueue()) {
+      if (row.state !== "queued") continue;
+      this.deps.store.updateQueueItem(row.id, { preset_json: JSON.stringify(preset) });
+      changed++;
+    }
+    if (changed > 0) this.emit();
+    return changed;
+  }
+
   reorder(ids: string[]): void {
     this.deps.store.reorderQueue(ids);
     this.emit();

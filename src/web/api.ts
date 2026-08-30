@@ -62,6 +62,12 @@ export const api = {
     if (!res.ok) throw new Error(`Could not ${action} the queue.`);
   },
 
+  async applyPresetToQueue(): Promise<{ updated: number }> {
+    const res = await fetch("/api/queue/apply-preset", { method: "POST" });
+    if (!res.ok) throw new Error("Could not apply the settings to the queue.");
+    return res.json() as Promise<{ updated: number }>;
+  },
+
   async acceptAll(): Promise<{ accepted: number; skipped: { name: string; reason: string }[] }> {
     const res = await fetch("/api/queue/accept-all", { method: "POST" });
     if (!res.ok) throw new Error("Could not accept those.");
